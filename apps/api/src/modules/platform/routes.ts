@@ -48,4 +48,73 @@ export async function platformRoutes(app: FastifyInstance) {
     ]);
     return { organizationId: tenantId, metrics: { products, locations, sales, openPurchaseOrders } };
   });
+
+  app.get('/api/platform/admin/stats', async () => {
+    const [totalTenants, activeTenants, inactiveTenants, activeMemberships, activeLocations, products, sales, openPurchaseOrders] = await Promise.all([
+      prisma.tenant.count(),
+      prisma.tenant.count({ where: { active: true } }),
+      prisma.tenant.count({ where: { active: false } }),
+      prisma.membership.count({ where: { active: true } }),
+      prisma.location.count({ where: { active: true } }),
+      prisma.product.count(),
+      prisma.sale.count({ where: { status: { in: ['COMPLETED','PARTIALLY_REFUNDED','REFUNDED'] } } }),
+      prisma.purchaseOrder.count({ where: { status: { in: ['DRAFT','PENDING_APPROVAL','APPROVED','SUBMITTED','CONFIRMED','PARTIALLY_RECEIVED'] } } }),
+    ]);
+    return {
+      totalTenants,
+      activeTenants,
+      inactiveTenants,
+      activeMemberships,
+      activeLocations,
+      products,
+      completedSales: sales,
+      openPurchaseOrders,
+      generatedAt: new Date().toISOString(),
+    };
+  });
+
+  app.get('/api/platform/admin/tenants', async () => {
+    const tenants = await prisma.tenant.findMany({
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        currency: true,
+        timezone: true,
+        active: true,
+        offlineSalesEnabled: true,
+        offlineMaxSnapshotHours: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return Promise.all(tenants.map(async tenant => {
+      const [members, locations, products, sales, openPurchaseOrders] = await Promise.all([
+        prisma.membership.count({ where: { tenantId: tenant.id, active: true } }),
+        prisma.location.count({ where: { tenantId: tenant.id, active: true } }),
+        prisma.product.count({ where: { tenantId: tenant.id } }),
+        prisma.sale.count({ where: { tenantId: tenant.id, status: { in: ['COMPLETED','PARTIALLY_REFUNDED','REFUNDED'] } } }),
+        prisma.purchaseOrder.count({ where: { tenantId: tenant.id, status: { in: ['DRAFT','PENDING_APPROVAL','APPROVED','SUBMITTED','CONFIRMED','PARTIALLY_RECEIVED'] } } }),
+      ]);
+      return { ...tenant, memberCount: members, locationCount: locations, productCount: products, completedSales: sales, openPurchaseOrders };
+    }));
+  });
+
+  app.put<{ Params: { tenantId: string; state: string } }>('/api/platform/admin/tenants/:tenantId/active/:state', async (request, reply) => {
+    const params = z.object({ tenantId: z.string().min(1).max(100), state: z.enum(['enabled','disabled']) }).parse(request.params);
+    const existing = await prisma.tenant.findUnique({ where: { id: params.tenantId }, select: { id: true } });
+    if (!existing) return reply.code(404).send({ error: 'POS tenant not found.' });
+    const tenant = await prisma.tenant.update({ where: { id: params.tenantId }, data: { active: params.state === 'enabled' }, select: { id: true, active: true } });
+    return { success: true, tenantId: tenant.id, active: tenant.active };
+  });
+
+  app.put<{ Params: { tenantId: string; state: string } }>('/api/platform/admin/tenants/:tenantId/offline-sales/:state', async (request, reply) => {
+    const params = z.object({ tenantId: z.string().min(1).max(100), state: z.enum(['enabled','disabled']) }).parse(request.params);
+    const existing = await prisma.tenant.findUnique({ where: { id: params.tenantId }, select: { id: true } });
+    if (!existing) return reply.code(404).send({ error: 'POS tenant not found.' });
+    const tenant = await prisma.tenant.update({ where: { id: params.tenantId }, data: { offlineSalesEnabled: params.state === 'enabled' }, select: { id: true, offlineSalesEnabled: true } });
+    return { success: true, tenantId: tenant.id, offlineSalesEnabled: tenant.offlineSalesEnabled };
+  });
+
 }
