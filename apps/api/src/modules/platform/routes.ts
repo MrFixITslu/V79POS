@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { ShipmentStatus } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
@@ -39,14 +40,46 @@ export async function platformRoutes(app: FastifyInstance) {
   });
 
   app.get<{ Params: { organizationId: string } }>('/api/platform/summary/:organizationId', async (request, reply) => {
-    const tenant = await prisma.tenant.findUnique({ where: { id: request.params.organizationId }, select: { id: true, active: true } });
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: request.params.organizationId },
+      select: { id: true, active: true, currency: true, timezone: true }
+    });
     if (!tenant?.active) return reply.code(404).send({ error: 'POS workspace is not provisioned.' });
     const tenantId = tenant.id;
-    const [products, locations, sales, openPurchaseOrders] = await Promise.all([
-      prisma.product.count({ where: { tenantId } }), prisma.location.count({ where: { tenantId, active: true } }),
-      prisma.sale.count({ where: { tenantId, status: { in: ['COMPLETED','PARTIALLY_REFUNDED','REFUNDED'] } } }), prisma.purchaseOrder.count({ where: { tenantId, status: { in: ['DRAFT','PENDING_APPROVAL','APPROVED','SUBMITTED','CONFIRMED','PARTIALLY_RECEIVED'] } } })
+    const since30d = new Date(Date.now() - 30 * 86400_000);
+    const now = new Date();
+    const [products, locations, sales, openPurchaseOrders, recentSales, criticalReplenishment, delayedShipments, unresolvedExceptions] = await Promise.all([
+      prisma.product.count({ where: { tenantId } }),
+      prisma.location.count({ where: { tenantId, active: true } }),
+      prisma.sale.count({ where: { tenantId, status: { in: ['COMPLETED','PARTIALLY_REFUNDED','REFUNDED'] } } }),
+      prisma.purchaseOrder.count({ where: { tenantId, status: { in: ['DRAFT','PENDING_APPROVAL','APPROVED','SUBMITTED','CONFIRMED','PARTIALLY_RECEIVED'] } } }),
+      prisma.sale.aggregate({
+        where: { tenantId, completedAt: { gte: since30d }, status: { in: ['COMPLETED','PARTIALLY_REFUNDED','REFUNDED'] } },
+        _count: { _all: true },
+        _sum: { total: true }
+      }),
+      prisma.reorderRecommendation.count({ where: { tenantId, status: { in: ['ORDER_NOW','STOCKOUT_RISK','STOCKED_OUT'] } } }),
+      prisma.shipment.count({
+        where: { tenantId, status: { notIn: [ShipmentStatus.RECEIVED, ShipmentStatus.CANCELLED] }, eta: { lt: now } }
+      }),
+      prisma.inventoryException.count({ where: { tenantId, resolvedAt: null } })
     ]);
-    return { organizationId: tenantId, metrics: { products, locations, sales, openPurchaseOrders } };
+    return {
+      organizationId: tenantId,
+      generatedAt: new Date().toISOString(),
+      metrics: {
+        products,
+        locations,
+        sales,
+        openPurchaseOrders,
+        sales30d: recentSales._count._all,
+        revenue30d: recentSales._sum.total?.toNumber() ?? 0,
+        currency: tenant.currency,
+        criticalReplenishmentItems: criticalReplenishment,
+        delayedShipments,
+        unresolvedInventoryExceptions: unresolvedExceptions
+      }
+    };
   });
 
   app.get('/api/platform/admin/stats', async () => {
