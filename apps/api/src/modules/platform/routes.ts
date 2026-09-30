@@ -5,11 +5,18 @@ import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { verifyPlatformSignature } from '../../lib/platform-signature.js';
 import { builtInRoleKeys } from '../auth/context.js';
+import { defaultHubTeamLocationCode, hubTeamRoles, posRoleForHubTeamRole } from './team-provisioning.js';
 
 const provisionSchema = z.object({
   organization: z.object({ id: z.string().min(8).max(100), name: z.string().min(1).max(180), slug: z.string().min(1).max(100) }),
   user: z.object({ id: z.string().uuid() }),
   role: z.literal('owner')
+});
+
+const teamMemberProvisionSchema = z.object({
+  organizationId: z.string().min(8).max(100),
+  user: z.object({ id: z.string().uuid() }),
+  role: z.enum(hubTeamRoles),
 });
 
 export async function platformRoutes(app: FastifyInstance) {
@@ -37,6 +44,56 @@ export async function platformRoutes(app: FastifyInstance) {
       await tx.register.upsert({ where: { tenantId_code: { tenantId: organization.id, code: 'REG-01' } }, create: { tenantId: organization.id, locationId: location.id, name: 'Register 1', code: 'REG-01' }, update: {} });
     });
     return { organizationId: organization.id, ownerUserId: user.id, provisioned: true };
+  });
+
+  app.post('/api/platform/members/provision', async (request, reply) => {
+    const { organizationId, user, role } = teamMemberProvisionSchema.parse(request.body);
+    const roleKey = posRoleForHubTeamRole(role);
+
+    const provisioned = await prisma.$transaction(async tx => {
+      const tenant = await tx.tenant.findUnique({
+        where: { id: organizationId },
+        select: { id: true, active: true }
+      });
+      if (!tenant?.active) return null;
+
+      const targetRole = await tx.tenantRole.findUnique({
+        where: { tenantId_key: { tenantId: organizationId, key: roleKey } },
+        select: { key: true }
+      });
+      if (!targetRole) return null;
+
+      const mainLocation = await tx.location.findUnique({
+        where: { tenantId_code: { tenantId: organizationId, code: defaultHubTeamLocationCode } },
+        select: { id: true, active: true }
+      });
+      if (!mainLocation?.active) return null;
+
+      const membership = await tx.membership.upsert({
+        where: { tenantId_userId: { tenantId: organizationId, userId: user.id } },
+        create: { tenantId: organizationId, userId: user.id, roleKey },
+        update: { roleKey, active: true }
+      });
+
+      await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
+      await tx.userLocationAccess.create({
+        data: { membershipId: membership.id, locationId: mainLocation.id }
+      });
+
+      return { membershipId: membership.id, locationId: mainLocation.id };
+    });
+
+    if (!provisioned) {
+      return reply.code(409).send({ error: 'POS workspace is not ready for team member provisioning.' });
+    }
+
+    return {
+      provisioned: true,
+      organizationId,
+      userId: user.id,
+      roleKey,
+      locationIds: [provisioned.locationId]
+    };
   });
 
   app.get<{ Params: { organizationId: string } }>('/api/platform/summary/:organizationId', async (request, reply) => {
