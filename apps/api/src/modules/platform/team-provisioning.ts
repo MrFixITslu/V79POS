@@ -11,4 +11,8 @@ export function posRoleForHubTeamRole(role: HubTeamRole) {
   return roleMap[role];
 }
 
+export function canHubDeactivatePosRole(roleKey: string) {
+  return !['OWNER', 'ADMIN'].includes(roleKey);
+}
+
 export const defaultHubTeamLocationCode = 'MAIN';
