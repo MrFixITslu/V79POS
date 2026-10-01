@@ -272,7 +272,7 @@ function select(name, label, options, blank = "Select…") {
   return `<div class="field"><label for="${h(name)}">${h(label)}</label><select id="${h(name)}" name="${h(name)}" ${name === "customerId" ? "" : "required"}><option value="">${h(blank)}</option>${options.map(([value, text]) => `<option value="${h(value)}">${h(text)}</option>`).join("")}</select></div>`;
 }
 function header(title, description, action = "") {
-  return `<div class="pagehead"><div><div class="eyebrow">V79 Commerce / ${h(state.page)}</div><h1>${h(title)}</h1><p>${h(description)}</p></div>${action}</div>`;
+  return `<div class="pagehead"><div><div class="eyebrow">V79 DIGITAL POS / ${h(state.page)}</div><h1>${h(title)}</h1><p>${h(description)}</p></div>${action}</div>`;
 }
 function badge(text) {
   let kind = /STOCKED|RISK|FAILED|CANCELLED/.test(text)
@@ -289,17 +289,17 @@ function table(headers, rows) {
   return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 }
 function renderLogin() {
-  root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large">✳ V79 <span style="color:#48d5ae">POS</span></div><div><div class="eyebrow">From idea to advantage</div><h1>Everything your business needs at the counter.</h1><p>Sell, track stock and stay ahead of reorders. Your Vision79 workspace, ready for the day ahead.</p></div><div class="footnote">V79 Digital · Saint Lucia</div></div><main id="main" class="login-panel"><div class="card"><span class="pill">BETA WORKSPACE</span><h2>Welcome to V79 POS</h2><p class="muted">Sign in to your Vision79 Hub account to access your business workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Go to Vision79 Hub ↗</a><button class="btn" data-action="demo">Explore the interface (demo)</button><div class="notice warn" style="margin-top:14px">The Hub must launch POS with a short-lived POS access token. The demo has sample data and does not save sales.</div><details><summary>Beta integration: connect an issued POS token</summary><p class="footnote">For Hub integration testing only. The token stays in this browser tab and is cleared on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details><p class="footnote">Need an account? Create one in Vision79 Hub.</p></div></main></div>`;
+  root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><span class="logo-orb">V</span><span>V79 Digital <b>POS</b></span></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details><summary>Integration testing</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
 }
 function render() {
   if (!state.me && !state.demo) return renderLogin();
   const title = state.demo
     ? "Preview workspace"
     : state.me?.roleKey || "Workspace";
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">V</span><span>V79 POS<small>COMMERCE WORKSPACE</small></span></div><nav class="nav" aria-label="Main navigation">${tabs.map(([id, label, icon]) => `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span aria-hidden="true">${icon}</span>${label}</button>`).join("")}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo mode" : "Hub connected"}</strong>${state.demo ? "Sample data · no changes saved" : `Role: ${h(title)} · ${h(state.tenant.slice(0, 8))}…`}</div></aside><div class="work"><header class="topbar"><div><strong>${state.demo ? "Demo business" : h(state.me?.roleKey || "Business workspace")}</strong><div class="meta">${state.demo ? "Preview only" : "Vision79 Hub membership verified"}</div></div><div class="top-actions"><span class="statusline"><span class="dot"></span>${state.demo ? "Preview" : "Connected"}</span><a class="btn" href="https://hub.v79sl.com/">V79 Hub</a><button class="btn" data-action="refresh">Refresh</button><button class="btn" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main">${pages[state.page]()}</main></div></div>`;
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">V</span><span>V79 POS<small>BY V79 DIGITAL</small></span></div><div class="nav-label">Commerce</div><nav class="nav" aria-label="Main navigation">${tabs.map(([id, label, icon]) => `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`).join("")}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo workspace" : "Workspace connected"}</strong><span class="connection"><i></i>${state.demo ? "Sample data · no changes saved" : `Hub role: ${h(title)}`}</span></div><a class="hub-link" href="https://hub.v79sl.com/">← Back to V79 Digital Hub</a><div class="sidebar-tagline">From Idea to Advantage.</div></aside><div class="work"><header class="topbar"><div><div class="top-eyebrow">Active workspace</div><strong>${state.demo ? "Demo business" : h(state.me?.roleKey || "Business workspace")}</strong><div class="meta">${state.demo ? "Preview only" : "V79 Digital Hub membership verified"}</div></div><div class="top-actions"><span class="statusline"><span class="dot"></span>${state.demo ? "Preview" : "Operational"}</span><button class="btn compact" data-action="refresh">Refresh</button><button class="btn compact" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main">${pages[state.page]()}</main></div></div>`;
 }
-const metric = (label, value, note) =>
-  `<div class="card metric"><div class="label">${h(label)}</div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
+const metric = (label, value, note, tone = "") =>
+  `<div class="card metric ${h(tone)}"><div class="metric-top"><div class="label">${h(label)}</div><span>LIVE</span></div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
 function overview() {
   if (!can("reports.read"))
     return (
@@ -311,11 +311,11 @@ function overview() {
     p = d.purchasing || {};
   return (
     header(
-      "Business overview",
-      "A clear view of sales and stock across your workspace",
+      "Commerce overview",
+      "Live sales, margin, inventory and supply signals across this workspace",
       `<div class="actions"><button class="btn primary" data-page="register">New sale →</button></div>`,
     ) +
-    `<div class="grid">${metric("Net revenue · 30 days", cash(s.netRevenue), "After refunds")}${metric("Completed sales", s.orders || 0, "Last 30 days")}${metric("Gross profit", cash(s.grossProfit), "Before operating expenses")}${metric("Stock at risk", i.criticalReplenishmentItems || 0, "Reorder alerts")}</div><div class="split"><section class="card section"><div class="row"><h2>Recent sales</h2><button class="btn" data-page="sales">View all</button></div>${
+    `<div class="grid metric-grid">${metric("Net revenue · 30 days", cash(s.netRevenue), "After refunds", "revenue")}${metric("Completed sales", s.orders || 0, "Last 30 days", "orders")}${metric("Average sale", cash(s.averageSale), "Per completed order", "average")}${metric("Gross profit", cash(s.grossProfit), "Before operating expenses", "profit")}${metric("Stock at risk", i.criticalReplenishmentItems || 0, "Reorder alerts", Number(i.criticalReplenishmentItems || 0) > 0 ? "risk" : "healthy")}</div><div class="ops-banner"><div><span class="ops-kicker">Inventory intelligence</span><strong>${Number(i.criticalReplenishmentItems || 0) > 0 ? `${h(i.criticalReplenishmentItems)} item(s) need replenishment attention` : "No critical replenishment signals"}</strong><small>Recommendations use demand, lead time and safety stock policy.</small></div><button class="btn" data-page="replenishment">Review signals →</button></div><div class="split"><section class="card section"><div class="row"><div><h2>Recent sales</h2><p class="section-note">Latest completed and recorded transactions</p></div><button class="btn compact" data-page="sales">View all</button></div>${
       (state.data.sales || []).length
         ? table(
             ["Sale", "Customer", "Date", "Total"],
@@ -329,7 +329,7 @@ function overview() {
         : empty(
             "No sales recorded yet. Open a register and create your first sale.",
           )
-    }</section><section class="card section"><h2>Operations snapshot</h2><div class="row"><span class="muted">Inventory value</span><strong>${cash(i.value)}</strong></div><div class="row"><span class="muted">Open purchase orders</span><strong>${h(p.openPurchaseOrders || 0)}</strong></div><div class="row"><span class="muted">Delayed shipments</span><strong>${h(d.logistics?.delayedShipments || 0)}</strong></div><hr class="divider"><button class="btn" data-page="replenishment">Review reorder signals →</button></section></div>`
+    }</section><section class="card section operations-card"><div><h2>Operations snapshot</h2><p class="section-note">Stock and inbound supply position</p></div><div class="ops-stat"><span>Inventory value</span><strong>${cash(i.value)}</strong></div><div class="ops-stat"><span>Open purchase orders</span><strong>${h(p.openPurchaseOrders || 0)}</strong></div><div class="ops-stat"><span>Delayed shipments</span><strong class="${Number(d.logistics?.delayedShipments || 0) > 0 ? "danger-text" : ""}">${h(d.logistics?.delayedShipments || 0)}</strong></div><hr class="divider"><button class="btn wide" data-page="purchasing">Open purchasing →</button></section></div>`
   );
 }
 function variants() {
@@ -998,322 +998,3 @@ document.addEventListener("submit", async (event) => {
       case "policy-form":
         result = await api("/v1/replenishment/policies", {
           method: "PUT",
-          body: JSON.stringify({
-            locationId: v.get("locationId"),
-            productVariantId: v.get("variantId"),
-            preferredSupplierId: v.get("supplierId") || undefined,
-            safetyStockQty: Number(v.get("safety")),
-            reviewPeriodDays: Number(v.get("review")),
-            manualLeadDays:
-              v.get("lead") === "" ? undefined : Number(v.get("lead")),
-            manualDailyDemand:
-              v.get("demand") === "" ? undefined : Number(v.get("demand")),
-            enabled: true,
-          }),
-        });
-        break;
-      case "receipt-form": {
-        const po = (state.data.purchaseOrders || []).find(
-          (x) => x.id === state.selectedOrder,
-        );
-        const line = po?.lines.find((x) => x.id === v.get("lineId"));
-        if (!line) throw Error("Select an outstanding purchase-order line.");
-        const qty = Number(v.get("quantity"));
-        if (qty > Number(line.orderedQty) - Number(line.receivedQty))
-          throw Error("Quantity exceeds the outstanding amount.");
-        const product = variants().find((x) => x.id === line.productVariantId);
-        const requiresLot =
-          product?.product.productType === "LOT_TRACKED" ||
-          product?.requiresExpiry;
-        const isSerialized = product?.product.productType === "SERIALIZED";
-        const serialNumbers = String(v.get("serials") || "")
-          .split(/[\n,]+/)
-          .map((x) => x.trim())
-          .filter(Boolean);
-        if (requiresLot && !String(v.get("lot") || "").trim())
-          throw Error("A lot number is required for this product.");
-        if (product?.requiresExpiry && !v.get("expiry"))
-          throw Error("An expiry date is required for this product.");
-        if (isSerialized && serialNumbers.length !== qty)
-          throw Error("Provide one serial number per unit.");
-        result = await api(
-          `/v1/purchase-orders/${encodeURIComponent(po.id)}/receive`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              lines: [
-                {
-                  purchaseOrderLineId: line.id,
-                  receivedQty: qty,
-                  lots: requiresLot
-                    ? [
-                        {
-                          lotNumber: String(v.get("lot")).trim(),
-                          quantity: qty,
-                          expiryDate: v.get("expiry") || undefined,
-                        },
-                      ]
-                    : [],
-                  serialNumbers: isSerialized ? serialNumbers : [],
-                },
-              ],
-              additionalCosts: Number(v.get("additionalCosts") || 0),
-            }),
-          },
-        );
-        break;
-      }
-      case "adjustment-form":
-        result = await api("/v1/inventory/adjustments", {
-          method: "POST",
-          body: JSON.stringify({
-            locationId: v.get("locationId"),
-            productVariantId: v.get("variantId"),
-            type: v.get("type"),
-            quantity: Number(v.get("quantity")),
-            reason: v.get("reason"),
-          }),
-        });
-        break;
-      case "open-form":
-        result = await api(
-          `/v1/registers/${encodeURIComponent(state.selectedRegister)}/open`,
-          {
-            method: "POST",
-            body: JSON.stringify({ openingFloat: Number(v.get("float")) }),
-          },
-        );
-        break;
-      case "close-form": {
-        const r = currentRegister();
-        result = await api(
-          `/v1/register-sessions/${encodeURIComponent(r.sessions[0].id)}/close`,
-          {
-            method: "POST",
-            body: JSON.stringify({
-              closingCash: Number(v.get("cash")),
-              notes: v.get("notes") || undefined,
-            }),
-          },
-        );
-        break;
-      }
-      case "checkout-form": {
-        const method = String(v.get("method"));
-        const paid = Number(v.get("paid"));
-        const total = totals().total;
-        if (paid < total)
-          throw Error("Amount received is below the estimated total.");
-        if (method !== "CASH" && !String(v.get("providerRef") || "").trim())
-          throw Error(
-            "An external payment reference is required for non-cash payments.",
-          );
-        result = await api("/v1/sales", {
-          method: "POST",
-          body: JSON.stringify({
-            locationId: currentRegister().locationId,
-            registerId: state.selectedRegister,
-            registerSessionId: currentRegister().sessions[0].id,
-            clientReference: state.reference,
-            customerId: v.get("customerId") || undefined,
-            lines: state.cart.map((x) => ({
-              productVariantId: x.id,
-              quantity: x.quantity,
-              discount: 0,
-            })),
-            payments: [
-              {
-                method,
-                amount: paid,
-                ...(method === "CASH"
-                  ? {}
-                  : { providerRef: String(v.get("providerRef")).trim() }),
-              },
-            ],
-          }),
-        });
-        state.cart = [];
-        state.reference = key();
-        toast(`Sale ${result.number} completed · ${cash(result.total)}`);
-        break;
-      }
-      default:
-        return;
-    }
-    document.querySelector("#dialog")?.close();
-    document.querySelector("#dialog")?.remove();
-    await load();
-    render();
-    if (form.id !== "checkout-form") toast("Saved successfully");
-  } catch (err) {
-    toast(err.message, true);
-  } finally {
-    state.busy = false;
-    if (button) button.disabled = false;
-  }
-});
-root.addEventListener("input", (event) => {
-  if (event.target.id === "product-search") {
-    state.search = event.target.value;
-    const pos = event.target.selectionStart;
-    render();
-    const search = document.querySelector("#product-search");
-    search?.focus();
-    search?.setSelectionRange(pos, pos);
-  }
-});
-root.addEventListener("change", (event) => {
-  if (event.target.id === "register-select") {
-    state.selectedRegister = event.target.value;
-    state.cart = [];
-    state.reference = key();
-    render();
-  }
-});
-root.addEventListener("click", async (event) => {
-  const target = event.target.closest(
-    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive]",
-  );
-  if (!target) return;
-  if (target.dataset.page) {
-    state.page = target.dataset.page;
-    state.search = "";
-    render();
-    document.querySelector("#main")?.focus();
-    return;
-  }
-  if (target.dataset.modal) {
-    openModal(target.dataset.modal);
-    return;
-  }
-  if (target.dataset.receive) {
-    state.selectedOrder = target.dataset.receive;
-    openModal("receipt");
-    return;
-  }
-  if (target.dataset.approve) {
-    if (state.demo) return toast("Demo mode is read-only.", true);
-    if (!confirm("Approve this purchase order?")) return;
-    try {
-      await api(
-        `/v1/purchase-orders/${encodeURIComponent(target.dataset.approve)}/approve`,
-        { method: "POST" },
-      );
-      await load();
-      render();
-      toast("Purchase order approved");
-    } catch (err) {
-      toast(err.message, true);
-    }
-    return;
-  }
-  if (target.dataset.add) {
-    const id = target.dataset.add;
-    const row = state.cart.find((x) => x.id === id);
-    const variant = variants().find((x) => x.id === id);
-    if (
-      variant?.trackStock &&
-      Number(balance(id, currentRegister()?.locationId)?.available || 0) <
-        (row?.quantity || 0) + 1
-    )
-      return toast("Not enough stock available", true);
-    if (row) row.quantity++;
-    else state.cart.push({ id, quantity: 1 });
-    state.reference = key();
-    render();
-    return;
-  }
-  if (target.dataset.qty) {
-    const [id, delta] = target.dataset.qty.split(":");
-    const row = state.cart.find((x) => x.id === id);
-    if (!row) return;
-    if (Number(delta) > 0) {
-      const variant = variants().find((x) => x.id === id);
-      if (
-        variant?.trackStock &&
-        Number(balance(id, currentRegister()?.locationId)?.available || 0) <
-          row.quantity + 1
-      )
-        return toast("Not enough stock available", true);
-    }
-    row.quantity += Number(delta);
-    state.cart = state.cart.filter((x) => x.quantity > 0);
-    state.reference = key();
-    render();
-    return;
-  }
-  switch (target.dataset.action) {
-    case "demo":
-      state.demo = true;
-      state.me = { roleKey: "OWNER", permissions: ["*"] };
-      await load();
-      render();
-      break;
-    case "signout":
-      if (!state.demo) await fetch('/auth/logout', { method: 'POST', cache: 'no-store' }).catch(() => {});
-      state.token = "";
-      state.me = null;
-      state.demo = false;
-      state.cart = [];
-      state.data = {};
-      renderLogin();
-      break;
-    case "refresh":
-      try {
-        await load();
-        render();
-        toast("Data refreshed");
-      } catch (err) {
-        toast(err.message, true);
-      }
-      break;
-    case "clear-cart":
-      state.cart = [];
-      state.reference = key();
-      render();
-      break;
-    case "checkout":
-    case "open-register":
-    case "close-register":
-      openModal(target.dataset.action);
-      break;
-    case "recalculate":
-      try {
-        await api("/v1/replenishment/recalculate", { method: "POST" });
-        await load();
-        render();
-        toast("Recommendations recalculated");
-      } catch (err) {
-        toast(err.message, true);
-      }
-      break;
-    case "draft-pos": {
-      const ids = [...document.querySelectorAll(".reorder-check:checked")].map(
-        (x) => x.value,
-      );
-      if (!ids.length)
-        return toast(
-          "Select at least one supplier-linked recommendation",
-          true,
-        );
-      try {
-        await api("/v1/replenishment/create-draft-pos", {
-          method: "POST",
-          body: JSON.stringify({ recommendationIds: ids }),
-        });
-        await load();
-        render();
-        toast("Draft purchase orders created");
-      } catch (err) {
-        toast(err.message, true);
-      }
-      break;
-    }
-  }
-});
-document.addEventListener("click", (event) => {
-  if (event.target.closest("[data-action=close-dialog]")) {
-    document.querySelector("#dialog")?.close();
-    document.querySelector("#dialog")?.remove();
-  }
-});
