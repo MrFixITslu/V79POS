@@ -5,7 +5,7 @@ import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { verifyPlatformSignature } from '../../lib/platform-signature.js';
 import { builtInRoleKeys } from '../auth/context.js';
-import { defaultHubTeamLocationCode, hubTeamRoles, posRoleForHubTeamRole } from './team-provisioning.js';
+import { canHubDeactivatePosRole, defaultHubTeamLocationCode, hubTeamRoles, posRoleForHubTeamRole } from './team-provisioning.js';
 
 const provisionSchema = z.object({
   organization: z.object({ id: z.string().min(8).max(100), name: z.string().min(1).max(180), slug: z.string().min(1).max(100) }),
@@ -17,6 +17,11 @@ const teamMemberProvisionSchema = z.object({
   organizationId: z.string().min(8).max(100),
   user: z.object({ id: z.string().uuid() }),
   role: z.enum(hubTeamRoles),
+});
+
+const teamMemberDeprovisionSchema = z.object({
+  organizationId: z.string().min(8).max(100),
+  user: z.object({ id: z.string().uuid() }),
 });
 
 export async function platformRoutes(app: FastifyInstance) {
@@ -93,6 +98,37 @@ export async function platformRoutes(app: FastifyInstance) {
       userId: user.id,
       roleKey,
       locationIds: [provisioned.locationId]
+    };
+  });
+
+  app.post('/api/platform/members/deprovision', async (request, reply) => {
+    const { organizationId, user } = teamMemberDeprovisionSchema.parse(request.body);
+    const membership = await prisma.membership.findUnique({
+      where: { tenantId_userId: { tenantId: organizationId, userId: user.id } },
+      select: { id: true, roleKey: true, active: true }
+    });
+
+    if (!membership) {
+      return { deprovisioned: true, organizationId, userId: user.id, alreadyAbsent: true };
+    }
+    if (!canHubDeactivatePosRole(membership.roleKey)) {
+      return reply.code(409).send({ error: 'POS owner or admin membership cannot be deactivated through the Hub team-member endpoint.' });
+    }
+
+    await prisma.$transaction(async tx => {
+      await tx.membership.update({
+        where: { id: membership.id },
+        data: { active: false }
+      });
+      await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
+    });
+
+    return {
+      deprovisioned: true,
+      organizationId,
+      userId: user.id,
+      roleKey: membership.roleKey,
+      alreadyInactive: !membership.active
     };
   });
 
