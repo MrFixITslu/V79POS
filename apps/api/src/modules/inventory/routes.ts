@@ -17,6 +17,13 @@ const adjustmentSchema = z.object({
 });
 
 export async function inventoryRoutes(app: FastifyInstance) {
+  app.get('/v1/locations', { preHandler: requirePermission('inventory.read') }, async request => ({
+    locations: await prisma.location.findMany({
+      where: { tenantId: request.auth.tenantId, active: true, ...(request.auth.allLocations ? {} : { id: { in: [...request.auth.locationIds] } }) },
+      select: { id: true, name: true, code: true, type: true },
+      orderBy: { name: 'asc' }
+    })
+  }));
   app.get('/v1/inventory', { preHandler: requirePermission('inventory.read') }, async request => {
     const query = z.object({ locationId: z.string().optional() }).parse(request.query);
     if (query.locationId) assertLocationAccess(request, query.locationId);
