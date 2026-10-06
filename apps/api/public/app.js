@@ -39,6 +39,8 @@ const state = {
   cart: [],
   reference: key(),
   selectedRegister: "",
+  selectedSale: "",
+  selectedReturnLine: "",
   search: "",
   demo: false,
   busy: false,
@@ -464,7 +466,7 @@ function sales() {
     return header("Sales", "Transaction history") + needs("sales.read");
   const rows = (state.data.sales || []).map(
     (x) =>
-      `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.customer?.name || "Walk-in")}</td><td>${h(x.payments?.map((p) => p.method.replaceAll("_", " ")).join(", ") || "—")}</td><td>${badge(x.status)}</td><td><strong>${cash(x.total)}</strong></td></tr>`,
+      `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.customer?.name || "Walk-in")}</td><td>${h(x.payments?.map((p) => p.method.replaceAll("_", " ")).join(", ") || "—")}</td><td>${badge(x.status)}</td><td><strong>${cash(x.total)}</strong></td><td>${can("sales.refund") && ["COMPLETED","PARTIALLY_REFUNDED"].includes(x.status) ? `<button class="btn compact" data-return="${h(x.id)}">Return / refund</button>` : ""}</td></tr>`,
   );
   return (
     header(
@@ -472,7 +474,7 @@ function sales() {
       "Recent transactions and payment methods",
       `<button class="btn primary" data-page="register">+ New sale</button>`,
     ) +
-    `<section class="card section">${rows.length ? table(["Sale", "Customer", "Payment", "Status", "Total"], rows) : empty("No sales to display.")}</section>`
+    `<section class="card section">${rows.length ? table(["Sale", "Customer", "Payment", "Status", "Total", "Actions"], rows) : empty("No sales to display.")}</section>`
   );
 }
 function purchasing() {
@@ -824,6 +826,41 @@ function openModal(name) {
       "Complete sale",
     );
   }
+  if (name === "return") {
+    const sale = (state.data.sales || []).find((row) => row.id === state.selectedSale);
+    if (!sale) return toast("Sale not found", true);
+    const lines = sale.lines || [];
+    if (!lines.length) return toast("This sale has no returnable lines", true);
+    if (!state.selectedReturnLine || !lines.some((line) => line.id === state.selectedReturnLine)) {
+      state.selectedReturnLine = lines[0].id;
+    }
+    const line = lines.find((row) => row.id === state.selectedReturnLine);
+    const variant = line?.productVariant;
+    const isSerialized = variant?.product?.productType === "SERIALIZED";
+    const requiresLot = variant?.product?.productType === "LOT_TRACKED" || variant?.requiresExpiry;
+    const customerRequiredMethods = sale.customerId ? [["STORE_CREDIT", "Store credit"]] : [];
+    const lineOptions = lines.map((row) =>
+      `<option value="${h(row.id)}" ${row.id === state.selectedReturnLine ? "selected" : ""}>${h(row.description)} · ${h(row.quantity)} sold · ${cash(row.lineTotal)}</option>`
+    ).join("");
+    const trackingFields = isSerialized
+      ? `<div class="field"><label for="serialId">Serial number</label><select id="serialId" name="serialId" required><option value="">Select…</option>${(line.serials || []).map((row) => `<option value="${h(row.serialId)}">${h(row.serial?.serialNumber || row.serialId)}</option>`).join("")}</select></div>`
+      : requiresLot
+        ? `<div class="field"><label for="lotId">Lot</label><select id="lotId" name="lotId" required><option value="">Select…</option>${(line.lotAllocations || []).map((row) => `<option value="${h(row.lotId)}">${h(row.lot?.lotNumber || row.lotId)} · ${h(row.quantity)} sold</option>`).join("")}</select></div>`
+        : "";
+    modal(
+      `Return ${sale.number}`,
+      `<div class="field wide notice">Refunds are calculated from the original line total. The server validates previous returns before posting stock or money.</div>` +
+        `<div class="field wide"><label for="return-line-select">Item</label><select id="return-line-select" name="saleLineId" required>${lineOptions}</select></div>` +
+        field("quantity", "Quantity to return", "number", isSerialized ? "1" : "1", `required min="0.001" max="${h(line.quantity)}" step="${isSerialized ? "1" : "any"}"`) +
+        trackingFields +
+        `<div class="field"><label><input type="checkbox" name="restock" checked> Return to sellable stock</label></div>` +
+        select("method", "Refund method", [["CASH","Cash"],["EXTERNAL_TERMINAL","External card terminal"],["BANK_TRANSFER","Bank transfer"],["MOBILE_WALLET","Mobile wallet"],...customerRequiredMethods]) +
+        field("providerRef", "External refund reference (non-cash)") +
+        `<div class="field wide"><label for="reason">Return reason</label><textarea id="reason" name="reason" required minlength="3" maxlength="500"></textarea></div>`,
+      "return-form",
+      "Complete return",
+    );
+  }
   if (name === "open-register")
     modal(
       "Open register",
@@ -1084,6 +1121,42 @@ document.addEventListener("submit", async (event) => {
           }),
         });
         break;
+      case "return-form": {
+        const sale = (state.data.sales || []).find((row) => row.id === state.selectedSale);
+        const line = sale?.lines?.find((row) => row.id === v.get("saleLineId"));
+        if (!sale || !line) throw Error("Sale line not found.");
+        const qty = Number(v.get("quantity"));
+        const variant = line.productVariant;
+        const isSerialized = variant?.product?.productType === "SERIALIZED";
+        const requiresLot = variant?.product?.productType === "LOT_TRACKED" || variant?.requiresExpiry;
+        if (isSerialized && qty !== 1) throw Error("Serialized returns must be processed one unit at a time.");
+        const method = String(v.get("method"));
+        const providerRef = String(v.get("providerRef") || "").trim();
+        if (!["CASH","STORE_CREDIT"].includes(method) && !providerRef) throw Error("An external refund reference is required for this method.");
+        const refundAmount = round((Number(line.lineTotal) / Number(line.quantity)) * qty);
+        result = await api(`/v1/sales/${encodeURIComponent(sale.id)}/returns`, {
+          method: "POST",
+          body: JSON.stringify({
+            reason: String(v.get("reason") || "").trim(),
+            lines: [{
+              saleLineId: line.id,
+              quantity: qty,
+              restock: v.has("restock"),
+              lotAllocations: requiresLot ? [{ lotId: String(v.get("lotId")), quantity: qty }] : [],
+              serialNumberIds: isSerialized ? [String(v.get("serialId"))] : []
+            }],
+            refunds: [{
+              method,
+              amount: refundAmount,
+              ...(providerRef ? { providerRef } : {})
+            }]
+          })
+        });
+        state.selectedSale = "";
+        state.selectedReturnLine = "";
+        toast(`Return ${result.number || ""} completed · ${cash(result.total || refundAmount)}`);
+        break;
+      }
       case "open-form":
         result = await api(
           `/v1/registers/${encodeURIComponent(state.selectedRegister)}/open`,
@@ -1178,10 +1251,14 @@ root.addEventListener("change", (event) => {
     state.reference = key();
     render();
   }
+  if (event.target.id === "return-line-select") {
+    state.selectedReturnLine = event.target.value;
+    openModal("return");
+  }
 });
 root.addEventListener("click", async (event) => {
   const target = event.target.closest(
-    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive]",
+    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return]",
   );
   if (!target) return;
   if (target.dataset.page) {
@@ -1214,6 +1291,13 @@ root.addEventListener("click", async (event) => {
     } catch (err) {
       toast(err.message, true);
     }
+    return;
+  }
+  if (target.dataset.return) {
+    state.selectedSale = target.dataset.return;
+    const sale = (state.data.sales || []).find((row) => row.id === state.selectedSale);
+    state.selectedReturnLine = sale?.lines?.[0]?.id || "";
+    openModal("return");
     return;
   }
   if (target.dataset.add) {
