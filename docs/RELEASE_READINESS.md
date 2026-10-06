@@ -41,3 +41,27 @@ The connected Figma Starter account reached its MCP tool-call allowance; UI desi
 - Offline sale replay is idempotent; oversells become explicit inventory exceptions.
 - Machine webhooks are authenticated by signatures and do not depend on interactive Hub login.
 - Production configuration rejects development auth/default cryptographic secrets.
+
+## REDTEAM remediation update — 2026-10-06
+
+Completed after the original RC review:
+
+- ✅ Restored the complete merchant browser application after a redesign commit truncated `app.js`.
+- ✅ Added browser syntax validation to CI and the release-check script.
+- ✅ Removed cashier PIN material from API responses and bound employee attribution to recent PIN verification.
+- ✅ Closed identified location-scope leaks across registers, orders, inventory, reports, stock counts, logistics and workforce views.
+- ✅ Prevented manager self-escalation and out-of-scope location/role assignment.
+- ✅ Isolated Postgres/Redis from the shared proxy network.
+- ✅ Added outbound webhook SSRF controls.
+- ✅ Replaced the five-minute Hub-token browser lifetime with an 8-hour configurable POS session while retaining live membership checks.
+- ✅ Direct CARD tender now requires a succeeded payment intent.
+- ✅ Added merchant returns/refunds, quotes/orders/invoices/layaway, cycle counts and standard branch-transfer workflows to the browser UI.
+- ✅ Current CI/release checks include locked dependencies, Prisma validation, browser JavaScript syntax, TypeScript build, tests, lint and production Compose boot.
+
+Still required before unrestricted merchant production:
+
+- Provider-specific electronic payment sandbox certification.
+- Deployed end-to-end tenant/location isolation tests and realistic concurrency/load tests.
+- Real device/offline beta validation, including outage/reconnect/replay behavior.
+- Guided UI for lot/serial/expiry transfer allocation plus broader admin surfaces (loyalty, gift cards, fulfillment, workforce and integration administration) as product scope requires.
+- Production backup restore drill and dependency/container security scan.
