@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { assertLocationAccess, requirePermission } from '../auth/context.js';
+import { issueCashierProof } from '../../lib/cashier-proof.js';
 const scrypt=promisify(scryptCb);
 async function hashPin(pin:string,salt:string){return (await scrypt(pin,salt,32) as Buffer).toString('base64url');}
 
@@ -38,7 +39,7 @@ export async function workforceRoutes(app: FastifyInstance) {
     const profile=await prisma.teamProfile.findUnique({where:{tenantId_employeeCode:{tenantId:request.auth.tenantId,employeeCode:body.employeeCode}},include:{membership:{include:{locationAccess:true}}}});if(!profile?.active||!profile.pinSalt||!profile.pinHash||!profile.membership.active) throw notFound('Active cashier profile not found');
     const allowed=profile.membership.roleKey==='OWNER'||profile.membership.roleKey==='ADMIN'||profile.membership.locationAccess.some(l=>l.locationId===body.locationId);if(!allowed) throw conflict('Employee is not assigned to this location');
     const candidate=Buffer.from(await hashPin(body.pin,profile.pinSalt),'base64url'), expected=Buffer.from(profile.pinHash,'base64url');if(candidate.length!==expected.length||!timingSafeEqual(candidate,expected)) throw conflict('Invalid PIN');
-    return {verified:true,userId:profile.userId,displayName:profile.displayName,employeeCode:profile.employeeCode};
+    return {verified:true,userId:profile.userId,displayName:profile.displayName,employeeCode:profile.employeeCode,proof:issueCashierProof({tenantId:request.auth.tenantId,locationId:body.locationId,userId:profile.userId})};
   });
   app.post('/v1/shifts/clock-in', { preHandler: requirePermission('shifts.use') }, async request=>{const body=z.object({locationId:z.string(),notes:z.string().max(500).optional()}).parse(request.body);assertLocationAccess(request,body.locationId);const open=await prisma.shift.findFirst({where:{tenantId:request.auth.tenantId,userId:request.auth.userId,status:ShiftStatus.OPEN}});if(open) throw conflict('User already has an open shift');return prisma.shift.create({data:{tenantId:request.auth.tenantId,userId:request.auth.userId,locationId:body.locationId,notes:body.notes}});});
   app.post('/v1/shifts/:id/clock-out', { preHandler: requirePermission('shifts.use') }, async request=>{const {id}=z.object({id:z.string()}).parse(request.params);const body=z.object({breakMinutes:z.coerce.number().int().min(0).max(1440).default(0),notes:z.string().max(500).optional()}).parse(request.body??{});const shift=await prisma.shift.findFirst({where:{id,tenantId:request.auth.tenantId,userId:request.auth.userId,status:ShiftStatus.OPEN}});if(!shift) throw notFound('Open shift not found');return prisma.shift.update({where:{id},data:{status:ShiftStatus.CLOSED,clockedOutAt:new Date(),breakMinutes:body.breakMinutes,notes:body.notes??shift.notes}});});
