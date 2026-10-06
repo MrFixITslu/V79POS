@@ -998,3 +998,322 @@ document.addEventListener("submit", async (event) => {
       case "policy-form":
         result = await api("/v1/replenishment/policies", {
           method: "PUT",
+          body: JSON.stringify({
+            locationId: v.get("locationId"),
+            productVariantId: v.get("variantId"),
+            preferredSupplierId: v.get("supplierId") || undefined,
+            safetyStockQty: Number(v.get("safety")),
+            reviewPeriodDays: Number(v.get("review")),
+            manualLeadDays:
+              v.get("lead") === "" ? undefined : Number(v.get("lead")),
+            manualDailyDemand:
+              v.get("demand") === "" ? undefined : Number(v.get("demand")),
+            enabled: true,
+          }),
+        });
+        break;
+      case "receipt-form": {
+        const po = (state.data.purchaseOrders || []).find(
+          (x) => x.id === state.selectedOrder,
+        );
+        const line = po?.lines.find((x) => x.id === v.get("lineId"));
+        if (!line) throw Error("Select an outstanding purchase-order line.");
+        const qty = Number(v.get("quantity"));
+        if (qty > Number(line.orderedQty) - Number(line.receivedQty))
+          throw Error("Quantity exceeds the outstanding amount.");
+        const product = variants().find((x) => x.id === line.productVariantId);
+        const requiresLot =
+          product?.product.productType === "LOT_TRACKED" ||
+          product?.requiresExpiry;
+        const isSerialized = product?.product.productType === "SERIALIZED";
+        const serialNumbers = String(v.get("serials") || "")
+          .split(/[\n,]+/)
+          .map((x) => x.trim())
+          .filter(Boolean);
+        if (requiresLot && !String(v.get("lot") || "").trim())
+          throw Error("A lot number is required for this product.");
+        if (product?.requiresExpiry && !v.get("expiry"))
+          throw Error("An expiry date is required for this product.");
+        if (isSerialized && serialNumbers.length !== qty)
+          throw Error("Provide one serial number per unit.");
+        result = await api(
+          `/v1/purchase-orders/${encodeURIComponent(po.id)}/receive`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              lines: [
+                {
+                  purchaseOrderLineId: line.id,
+                  receivedQty: qty,
+                  lots: requiresLot
+                    ? [
+                        {
+                          lotNumber: String(v.get("lot")).trim(),
+                          quantity: qty,
+                          expiryDate: v.get("expiry") || undefined,
+                        },
+                      ]
+                    : [],
+                  serialNumbers: isSerialized ? serialNumbers : [],
+                },
+              ],
+              additionalCosts: Number(v.get("additionalCosts") || 0),
+            }),
+          },
+        );
+        break;
+      }
+      case "adjustment-form":
+        result = await api("/v1/inventory/adjustments", {
+          method: "POST",
+          body: JSON.stringify({
+            locationId: v.get("locationId"),
+            productVariantId: v.get("variantId"),
+            type: v.get("type"),
+            quantity: Number(v.get("quantity")),
+            reason: v.get("reason"),
+          }),
+        });
+        break;
+      case "open-form":
+        result = await api(
+          `/v1/registers/${encodeURIComponent(state.selectedRegister)}/open`,
+          {
+            method: "POST",
+            body: JSON.stringify({ openingFloat: Number(v.get("float")) }),
+          },
+        );
+        break;
+      case "close-form": {
+        const r = currentRegister();
+        result = await api(
+          `/v1/register-sessions/${encodeURIComponent(r.sessions[0].id)}/close`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              closingCash: Number(v.get("cash")),
+              notes: v.get("notes") || undefined,
+            }),
+          },
+        );
+        break;
+      }
+      case "checkout-form": {
+        const method = String(v.get("method"));
+        const paid = Number(v.get("paid"));
+        const total = totals().total;
+        if (paid < total)
+          throw Error("Amount received is below the estimated total.");
+        if (method !== "CASH" && !String(v.get("providerRef") || "").trim())
+          throw Error(
+            "An external payment reference is required for non-cash payments.",
+          );
+        result = await api("/v1/sales", {
+          method: "POST",
+          body: JSON.stringify({
+            locationId: currentRegister().locationId,
+            registerId: state.selectedRegister,
+            registerSessionId: currentRegister().sessions[0].id,
+            clientReference: state.reference,
+            customerId: v.get("customerId") || undefined,
+            lines: state.cart.map((x) => ({
+              productVariantId: x.id,
+              quantity: x.quantity,
+              discount: 0,
+            })),
+            payments: [
+              {
+                method,
+                amount: paid,
+                ...(method === "CASH"
+                  ? {}
+                  : { providerRef: String(v.get("providerRef")).trim() }),
+              },
+            ],
+          }),
+        });
+        state.cart = [];
+        state.reference = key();
+        toast(`Sale ${result.number} completed · ${cash(result.total)}`);
+        break;
+      }
+      default:
+        return;
+    }
+    document.querySelector("#dialog")?.close();
+    document.querySelector("#dialog")?.remove();
+    await load();
+    render();
+    if (form.id !== "checkout-form") toast("Saved successfully");
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    state.busy = false;
+    if (button) button.disabled = false;
+  }
+});
+root.addEventListener("input", (event) => {
+  if (event.target.id === "product-search") {
+    state.search = event.target.value;
+    const pos = event.target.selectionStart;
+    render();
+    const search = document.querySelector("#product-search");
+    search?.focus();
+    search?.setSelectionRange(pos, pos);
+  }
+});
+root.addEventListener("change", (event) => {
+  if (event.target.id === "register-select") {
+    state.selectedRegister = event.target.value;
+    state.cart = [];
+    state.reference = key();
+    render();
+  }
+});
+root.addEventListener("click", async (event) => {
+  const target = event.target.closest(
+    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive]",
+  );
+  if (!target) return;
+  if (target.dataset.page) {
+    state.page = target.dataset.page;
+    state.search = "";
+    render();
+    document.querySelector("#main")?.focus();
+    return;
+  }
+  if (target.dataset.modal) {
+    openModal(target.dataset.modal);
+    return;
+  }
+  if (target.dataset.receive) {
+    state.selectedOrder = target.dataset.receive;
+    openModal("receipt");
+    return;
+  }
+  if (target.dataset.approve) {
+    if (state.demo) return toast("Demo mode is read-only.", true);
+    if (!confirm("Approve this purchase order?")) return;
+    try {
+      await api(
+        `/v1/purchase-orders/${encodeURIComponent(target.dataset.approve)}/approve`,
+        { method: "POST" },
+      );
+      await load();
+      render();
+      toast("Purchase order approved");
+    } catch (err) {
+      toast(err.message, true);
+    }
+    return;
+  }
+  if (target.dataset.add) {
+    const id = target.dataset.add;
+    const row = state.cart.find((x) => x.id === id);
+    const variant = variants().find((x) => x.id === id);
+    if (
+      variant?.trackStock &&
+      Number(balance(id, currentRegister()?.locationId)?.available || 0) <
+        (row?.quantity || 0) + 1
+    )
+      return toast("Not enough stock available", true);
+    if (row) row.quantity++;
+    else state.cart.push({ id, quantity: 1 });
+    state.reference = key();
+    render();
+    return;
+  }
+  if (target.dataset.qty) {
+    const [id, delta] = target.dataset.qty.split(":");
+    const row = state.cart.find((x) => x.id === id);
+    if (!row) return;
+    if (Number(delta) > 0) {
+      const variant = variants().find((x) => x.id === id);
+      if (
+        variant?.trackStock &&
+        Number(balance(id, currentRegister()?.locationId)?.available || 0) <
+          row.quantity + 1
+      )
+        return toast("Not enough stock available", true);
+    }
+    row.quantity += Number(delta);
+    state.cart = state.cart.filter((x) => x.quantity > 0);
+    state.reference = key();
+    render();
+    return;
+  }
+  switch (target.dataset.action) {
+    case "demo":
+      state.demo = true;
+      state.me = { roleKey: "OWNER", permissions: ["*"] };
+      await load();
+      render();
+      break;
+    case "signout":
+      if (!state.demo) await fetch('/auth/logout', { method: 'POST', cache: 'no-store' }).catch(() => {});
+      state.token = "";
+      state.me = null;
+      state.demo = false;
+      state.cart = [];
+      state.data = {};
+      renderLogin();
+      break;
+    case "refresh":
+      try {
+        await load();
+        render();
+        toast("Data refreshed");
+      } catch (err) {
+        toast(err.message, true);
+      }
+      break;
+    case "clear-cart":
+      state.cart = [];
+      state.reference = key();
+      render();
+      break;
+    case "checkout":
+    case "open-register":
+    case "close-register":
+      openModal(target.dataset.action);
+      break;
+    case "recalculate":
+      try {
+        await api("/v1/replenishment/recalculate", { method: "POST" });
+        await load();
+        render();
+        toast("Recommendations recalculated");
+      } catch (err) {
+        toast(err.message, true);
+      }
+      break;
+    case "draft-pos": {
+      const ids = [...document.querySelectorAll(".reorder-check:checked")].map(
+        (x) => x.value,
+      );
+      if (!ids.length)
+        return toast(
+          "Select at least one supplier-linked recommendation",
+          true,
+        );
+      try {
+        await api("/v1/replenishment/create-draft-pos", {
+          method: "POST",
+          body: JSON.stringify({ recommendationIds: ids }),
+        });
+        await load();
+        render();
+        toast("Draft purchase orders created");
+      } catch (err) {
+        toast(err.message, true);
+      }
+      break;
+    }
+  }
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-action=close-dialog]")) {
+    document.querySelector("#dialog")?.close();
+    document.querySelector("#dialog")?.remove();
+  }
+});
