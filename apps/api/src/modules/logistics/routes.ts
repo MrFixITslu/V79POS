@@ -34,7 +34,7 @@ export async function logisticsRoutes(app: FastifyInstance) {
       include: { purchaseOrder: { select: { number: true, shipToLocationId: true } }, lines: true, events: { orderBy: { occurredAt: 'desc' }, take: 10 } },
       orderBy: { updatedAt: 'desc' }, take: 100
     });
-    return { shipments: shipments.filter(s => !s.purchaseOrder || request.auth.allLocations || request.auth.locationIds.has(s.purchaseOrder.shipToLocationId)) };
+    return { shipments: shipments.filter(s => request.auth.allLocations || Boolean(s.purchaseOrder && request.auth.locationIds.has(s.purchaseOrder.shipToLocationId))) };
   });
 
   app.post('/v1/shipments', { preHandler: requirePermission('logistics.write') }, async request => {
