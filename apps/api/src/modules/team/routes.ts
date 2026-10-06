@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { conflict, notFound } from '../../lib/errors.js';
 import { requirePermission } from '../auth/context.js';
+import { writeAudit } from '../../lib/audit.js';
 
 const membershipSchema = z.object({
   userId: z.string().min(1),
@@ -51,6 +52,14 @@ export async function teamRoutes(app: FastifyInstance) {
       });
       await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
       if (body.locationIds.length) await tx.userLocationAccess.createMany({ data: body.locationIds.map(locationId => ({ membershipId: membership.id, locationId })) });
+      await writeAudit(tx, {
+        tenantId: request.auth.tenantId,
+        actorUserId: request.auth.userId,
+        action: 'team.membership_updated',
+        resourceType: 'Membership',
+        resourceId: membership.id,
+        after: { userId: body.userId, roleKey: body.roleKey, locationIds: body.locationIds }
+      });
       return tx.membership.findUnique({ where: { id: membership.id }, include: { role: true, locationAccess: true } });
     });
   });
