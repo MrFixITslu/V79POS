@@ -26,7 +26,7 @@ async function releaseReservations(tx: Prisma.TransactionClient, order: { id:str
 export async function orderRoutes(app: FastifyInstance) {
   app.get('/v1/orders', { preHandler: requirePermission('orders.read') }, async request => {
     const q=z.object({status:z.enum(['DRAFT','SENT','ACCEPTED','PARTIALLY_PAID','PAID','FULFILLING','COMPLETED','CANCELLED','EXPIRED']).optional(),limit:z.coerce.number().int().min(1).max(200).default(50)}).parse(request.query);
-    return {orders:await prisma.commerceOrder.findMany({where:{tenantId:request.auth.tenantId,status:q.status as CommerceOrderStatus|undefined},include:{customer:true,lines:true,payments:true},orderBy:{createdAt:'desc'},take:q.limit})};
+    return {orders:await prisma.commerceOrder.findMany({where:{tenantId:request.auth.tenantId,status:q.status as CommerceOrderStatus|undefined,...(request.auth.allLocations?{}:{locationId:{in:[...request.auth.locationIds]}})},include:{customer:true,lines:true,payments:true},orderBy:{createdAt:'desc'},take:q.limit})};
   });
 
   app.post('/v1/orders', { preHandler: requirePermission('orders.write') }, async request => {
