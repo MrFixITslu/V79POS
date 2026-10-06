@@ -8,6 +8,7 @@ fi
 pnpm install --frozen-lockfile
 pnpm db:generate
 pnpm db:validate
+node --check apps/api/public/app.js
 pnpm build
 pnpm test
 pnpm lint
