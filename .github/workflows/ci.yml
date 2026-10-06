@@ -16,9 +16,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm db:validate
+      - run: node --check apps/api/public/app.js
       - run: pnpm build
       - run: pnpm test
       - run: pnpm lint
