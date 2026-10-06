@@ -880,7 +880,16 @@ window.addEventListener("message", (event) => {
     typeof data.accessToken === "string" &&
     typeof data.tenantId === "string"
   ) {
-    connect(data.accessToken, data.tenantId);
+    fetch('/auth/exchange', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${data.accessToken}` },
+      cache: 'no-store'
+    })
+      .then(async response => {
+        if (!response.ok) throw Error((await response.json().catch(() => ({}))).error || 'Hub session exchange failed');
+        return connectCookie();
+      })
+      .catch(error => { renderLogin(); toast(error.message, true); });
   }
 });
 if (window.opener)
