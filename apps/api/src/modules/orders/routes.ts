@@ -6,7 +6,7 @@ import { prisma } from '../../lib/prisma.js';
 import { serializable } from '../../lib/transactions.js';
 import { businessNumber } from '../../lib/numbering.js';
 import { conflict, notFound } from '../../lib/errors.js';
-import { assertLocationAccess, requirePermission } from '../auth/context.js';
+import { assertLocationAccess, hasPermission, requirePermission } from '../auth/context.js';
 import { postInventoryMovement } from '../inventory/service.js';
 import { consumeFifoCost } from '../inventory/costing.js';
 import { debitInternalTender } from '../value/service.js';
@@ -32,6 +32,7 @@ export async function orderRoutes(app: FastifyInstance) {
   app.post('/v1/orders', { preHandler: requirePermission('orders.write') }, async request => {
     const body=z.object({locationId:z.string(),customerId:z.string().optional(),type:z.enum(['QUOTE','ORDER','LAYAWAY','INVOICE']),depositRequired:z.coerce.number().nonnegative().optional(),promotionCode:z.string().min(2).max(50).optional(),validUntil:z.coerce.date().optional(),dueAt:z.coerce.date().optional(),notes:z.string().max(2000).optional(),lines:z.array(z.object({productVariantId:z.string(),quantity:z.coerce.number().positive(),discount:z.coerce.number().nonnegative().default(0)})).min(1)}).parse(request.body);
     assertLocationAccess(request,body.locationId);
+    if(body.lines.some(line=>line.discount>0)&&!hasPermission(request.auth,'sales.discount')) throw conflict('This role cannot apply order line discounts');
     return serializable(async tx=>{
       const tenant=await tx.tenant.findUnique({where:{id:request.auth.tenantId}}); if(!tenant) throw notFound('Tenant not found');
       if(body.customerId && !await tx.customer.findFirst({where:{id:body.customerId,tenantId:tenant.id}})) throw notFound('Customer not found');
