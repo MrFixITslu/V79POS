@@ -27,6 +27,7 @@ const tabs = [
   ["inventory", "Inventory", "▤"],
   ["customers", "Customers", "♙"],
   ["sales", "Sales", "◴"],
+  ["orders", "Orders", "▧"],
   ["purchasing", "Purchasing", "⌁"],
   ["replenishment", "Replenishment", "↗"],
 ];
@@ -41,6 +42,7 @@ const state = {
   selectedRegister: "",
   selectedSale: "",
   selectedReturnLine: "",
+  selectedCommerceOrder: "",
   search: "",
   demo: false,
   busy: false,
@@ -244,6 +246,7 @@ async function load() {
     ["inventory", "/v1/inventory", "inventory.read"],
     ["customers", "/v1/customers?limit=200", "customers.read"],
     ["sales", "/v1/sales?limit=50", "sales.read"],
+    ["orders", "/v1/orders?limit=100", "orders.read"],
     ["suppliers", "/v1/suppliers", "procurement.read"],
     ["purchaseOrders", "/v1/purchase-orders", "procurement.read"],
     ["recommendations", "/v1/replenishment", "replenishment.read"],
@@ -477,6 +480,35 @@ function sales() {
     `<section class="card section">${rows.length ? table(["Sale", "Customer", "Payment", "Status", "Total", "Actions"], rows) : empty("No sales to display.")}</section>`
   );
 }
+function orders() {
+  if (!can("orders.read"))
+    return header("Orders", "Quotes, orders, invoices and layaway") + needs("orders.read");
+  const rows = (state.data.orders || []).map((x) => {
+    const actions = [];
+    if (can("orders.write") && ["DRAFT","SENT"].includes(x.status)) {
+      if (x.status === "DRAFT") actions.push(`<button class="btn compact" data-order-action="send" data-commerce-order="${h(x.id)}">Send</button>`);
+      actions.push(`<button class="btn compact" data-order-action="accept" data-commerce-order="${h(x.id)}">Accept</button>`);
+    }
+    if (can("orders.write") && !["CANCELLED","EXPIRED","COMPLETED"].includes(x.status) && Number(x.amountPaid) < Number(x.total)) {
+      actions.push(`<button class="btn compact" data-order-action="payment" data-commerce-order="${h(x.id)}">Add payment</button>`);
+    }
+    if (can("orders.write") && ["ACCEPTED","PARTIALLY_PAID","PAID","FULFILLING"].includes(x.status)) {
+      actions.push(`<button class="btn compact primary" data-order-action="complete" data-commerce-order="${h(x.id)}">Complete</button>`);
+    }
+    if (can("orders.write") && !["CANCELLED","COMPLETED"].includes(x.status) && Number(x.amountPaid) <= 0) {
+      actions.push(`<button class="btn compact" data-order-action="cancel" data-commerce-order="${h(x.id)}">Cancel</button>`);
+    }
+    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.type)}</td><td>${h(x.customer?.name || "Walk-in")}</td><td>${badge(x.status)}</td><td><strong>${cash(x.total)}</strong><small>${cash(x.amountPaid)} paid</small></td><td><div class="actions">${actions.join("")}</div></td></tr>`;
+  });
+  return (
+    header(
+      "Customer orders",
+      "Create and manage quotes, orders, invoices and layaway",
+      can("orders.write") ? `<button class="btn primary" data-modal="commerce-order">+ New order</button>` : "",
+    ) +
+    `<section class="card section">${rows.length ? table(["Order", "Type", "Customer", "Status", "Value", "Actions"], rows) : empty("No customer orders yet.")}</section>`
+  );
+}
 function purchasing() {
   if (!can("procurement.read"))
     return (
@@ -528,6 +560,7 @@ const pages = {
   inventory,
   customers,
   sales,
+  orders,
   purchasing,
   replenishment,
 };
@@ -647,6 +680,36 @@ function openModal(name) {
       "supplier-link-form",
       "Link product",
     );
+  if (name === "commerce-order")
+    modal(
+      "Create customer order",
+      select("locationId", "Location", locations) +
+        select("customerId", "Customer (optional)", (state.data.customers || []).map((x) => [x.id, x.name]), "Walk-in customer") +
+        select("type", "Order type", [["QUOTE","Quote"],["ORDER","Order"],["INVOICE","Invoice"],["LAYAWAY","Layaway"]]) +
+        select("variantId", "Product", variants().map((v) => [v.id, `${v.product.name} · ${v.sku}`])) +
+        field("quantity", "Quantity", "number", "1", 'required min="0.001" step="any"') +
+        (can("sales.discount") ? field("discount", "Line discount (XCD)", "number", "0", 'min="0" step="0.01"') : "") +
+        field("depositRequired", "Deposit required (XCD, optional)", "number", "", 'min="0" step="0.01"') +
+        field("validUntil", "Valid until", "date") +
+        field("dueAt", "Payment due", "date") +
+        `<div class="field wide"><label for="notes">Notes</label><textarea id="notes" name="notes" maxlength="2000"></textarea></div>`,
+      "commerce-order-form",
+      "Create order",
+    );
+  if (name === "order-payment") {
+    const order = (state.data.orders || []).find((row) => row.id === state.selectedCommerceOrder);
+    if (!order) return toast("Order not found", true);
+    const outstanding = Math.max(0, round(Number(order.total) - Number(order.amountPaid)));
+    modal(
+      `Payment · ${order.number}`,
+      `<div class="field wide notice">Outstanding balance <strong>${cash(outstanding)}</strong></div>` +
+        select("method", "Payment method", [["CASH","Cash"],["EXTERNAL_TERMINAL","External card terminal"],["BANK_TRANSFER","Bank transfer"],["MOBILE_WALLET","Mobile wallet"]]) +
+        field("amount", "Amount (XCD)", "number", outstanding.toFixed(2), `required min="0.01" max="${outstanding}" step="0.01"`) +
+        field("providerRef", "External payment reference (non-cash)"),
+      "order-payment-form",
+      "Record payment",
+    );
+  }
   if (name === "purchase-order")
     modal(
       "Create purchase order",
@@ -1024,6 +1087,43 @@ document.addEventListener("submit", async (event) => {
           },
         );
         break;
+      case "commerce-order-form":
+        result = await api("/v1/orders", {
+          method: "POST",
+          body: JSON.stringify({
+            locationId: v.get("locationId"),
+            customerId: v.get("customerId") || undefined,
+            type: v.get("type"),
+            depositRequired: v.get("depositRequired") === "" ? undefined : Number(v.get("depositRequired")),
+            validUntil: v.get("validUntil") || undefined,
+            dueAt: v.get("dueAt") || undefined,
+            notes: v.get("notes") || undefined,
+            lines: [{
+              productVariantId: v.get("variantId"),
+              quantity: Number(v.get("quantity")),
+              discount: can("sales.discount") ? Number(v.get("discount") || 0) : 0
+            }]
+          })
+        });
+        break;
+      case "order-payment-form": {
+        const order = (state.data.orders || []).find((row) => row.id === state.selectedCommerceOrder);
+        if (!order) throw Error("Order not found.");
+        const method = String(v.get("method"));
+        const providerRef = String(v.get("providerRef") || "").trim();
+        if (method !== "CASH" && !providerRef) throw Error("An external payment reference is required for non-cash payments.");
+        const register = currentRegister();
+        result = await api(`/v1/orders/${encodeURIComponent(order.id)}/payments`, {
+          method: "POST",
+          body: JSON.stringify({
+            ...(register?.sessions?.[0]?.id ? { registerSessionId: register.sessions[0].id } : {}),
+            method,
+            amount: Number(v.get("amount")),
+            ...(providerRef ? { providerRef } : {})
+          })
+        });
+        break;
+      }
       case "purchase-order-form":
         result = await api("/v1/purchase-orders", {
           method: "POST",
@@ -1258,7 +1358,7 @@ root.addEventListener("change", (event) => {
 });
 root.addEventListener("click", async (event) => {
   const target = event.target.closest(
-    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return]",
+    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action]",
   );
   if (!target) return;
   if (target.dataset.page) {
@@ -1288,6 +1388,26 @@ root.addEventListener("click", async (event) => {
       await load();
       render();
       toast("Purchase order approved");
+    } catch (err) {
+      toast(err.message, true);
+    }
+    return;
+  }
+  if (target.dataset.orderAction) {
+    if (state.demo) return toast("Demo mode is read-only.", true);
+    const id = target.dataset.commerceOrder;
+    const action = target.dataset.orderAction;
+    state.selectedCommerceOrder = id;
+    if (action === "payment") {
+      openModal("order-payment");
+      return;
+    }
+    if (["complete","cancel"].includes(action) && !confirm(`${action === "complete" ? "Complete" : "Cancel"} this order?`)) return;
+    try {
+      await api(`/v1/orders/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+      await load();
+      render();
+      toast(`Order ${action === "accept" ? "accepted" : action === "send" ? "sent" : action === "complete" ? "completed" : "cancelled"}`);
     } catch (err) {
       toast(err.message, true);
     }
