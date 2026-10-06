@@ -771,3 +771,40 @@ html,body{background:var(--v79-bg);color:#dce6f1}
 @media(max-width:600px){.metric-grid,.grid{grid-template-columns:1fr 1fr;gap:8px}.metric{padding:14px}.metric strong{font-size:20px}.form-grid{grid-template-columns:1fr}.ops-banner{align-items:flex-start;flex-direction:column}.topbar .meta,.top-eyebrow,.statusline{display:none}.top-actions{gap:5px}.btn.compact{padding:6px 8px}}
 @media(max-width:390px){.metric-grid,.grid{grid-template-columns:1fr}.product-grid{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+
+/* REDTEAM readability pass — POS controls must remain legible during fast counter use. */
+:root{font-size:16px}
+.nav-label{font-size:10px}
+.nav button{font-size:13px;min-height:44px}
+.brand small{font-size:10px}
+.sidebar-foot{font-size:11px}
+.sidebar-foot strong{font-size:12px}
+.hub-link{font-size:11px;min-height:40px}
+.sidebar-tagline{font-size:10px}
+.topbar strong{font-size:14px}
+.topbar .meta,.top-eyebrow{font-size:11px}
+.statusline{font-size:11px}
+.eyebrow{font-size:10px}
+.pagehead p{font-size:13px;line-height:1.55}
+.btn{font-size:12px;min-height:40px}
+.btn.compact{font-size:11px;min-height:36px}
+.metric-top span{font-size:9px}
+.metric .label{font-size:11px}
+.metric small{font-size:11px}
+.ops-banner strong{font-size:13px}
+.ops-banner small,.ops-kicker{font-size:11px}
+.section h2{font-size:15px}
+.section-note{font-size:11px}
+.ops-stat span{font-size:12px}
+.ops-stat strong{font-size:15px}
+.product small,.muted{font-size:12px}
+.pill{font-size:10px}
+.table th{font-size:11px}
+.table td{font-size:13px;line-height:1.45}
+.table td small{font-size:11px}
+.empty{font-size:12px}
+.field label{font-size:12px}
+.search,.field input,.field select,.field textarea{font-size:14px;min-height:42px}
+.login-points span{font-size:11px}
+.login-panel details,.footnote{font-size:11px}
+@media(max-width:600px){.btn.compact{font-size:11px;min-height:38px}.table{min-width:640px}}
