@@ -38,7 +38,7 @@ export async function stockCountRoutes(app: FastifyInstance) {
   });
 
   app.get('/v1/stock-counts', { preHandler: requirePermission('inventory.read') }, async request => ({
-    counts: await prisma.stockCount.findMany({ where: { tenantId: request.auth.tenantId }, orderBy: { createdAt: 'desc' }, take: 100 })
+    counts: await prisma.stockCount.findMany({ where: { tenantId: request.auth.tenantId, ...(request.auth.allLocations ? {} : { locationId: { in: [...request.auth.locationIds] } }) }, orderBy: { createdAt: 'desc' }, take: 100 })
   }));
 
   app.get('/v1/stock-counts/:id', { preHandler: requirePermission('inventory.read') }, async request => {
