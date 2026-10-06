@@ -1,13 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { SignJWT, createRemoteJWKSet, jwtVerify } from 'jose';
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { unauthorized } from '../../lib/errors.js';
 import { builtInPermissions, type AuthContext } from './context.js';
 
 const jwks = createRemoteJWKSet(new URL(config.HUB_JWKS_URL));
-const posSessionKey = createHash('sha256').update(config.ENCRYPTION_KEY).digest();
+const posSessionKey = createHmac('sha256', config.ENCRYPTION_KEY).update('v79-pos/session-signing/v1').digest();
 
 function bearer(request: FastifyRequest) {
   const header = request.headers.authorization;
