@@ -38,7 +38,7 @@ export async function syncRoutes(app: FastifyInstance) {
   });
 
   app.get('/v1/inventory/exceptions', { preHandler: requirePermission('inventory.read') }, async request => ({
-    exceptions: await prisma.inventoryException.findMany({ where: { tenantId: request.auth.tenantId, resolvedAt: null }, orderBy: { createdAt: 'desc' }, take: 200 })
+    exceptions: await prisma.inventoryException.findMany({ where: { tenantId: request.auth.tenantId, resolvedAt: null, ...(request.auth.allLocations ? {} : { locationId: { in: [...request.auth.locationIds] } }) }, orderBy: { createdAt: 'desc' }, take: 200 })
   }));
 
   app.post('/v1/inventory/exceptions/:id/resolve', { preHandler: requirePermission('inventory.adjust') }, async request => {
