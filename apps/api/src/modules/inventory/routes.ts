@@ -35,13 +35,15 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const q=z.object({locationId:z.string().optional(),expiringWithinDays:z.coerce.number().int().min(0).max(3650).optional()}).parse(request.query);
     if(q.locationId) assertLocationAccess(request,q.locationId);
     const expiry=q.expiringWithinDays!=null?new Date(Date.now()+q.expiringWithinDays*86400_000):undefined;
-    return {lots:await prisma.inventoryLot.findMany({where:{tenantId:request.auth.tenantId,quantityOnHand:{gt:0},...(q.locationId?{locationId:q.locationId}:{}),...(expiry?{expiryDate:{lte:expiry}}:{})},include:{productVariant:{include:{product:true}},location:true},orderBy:{expiryDate:'asc'},take:500})};
+    const locationFilter=q.locationId?{locationId:q.locationId}:request.auth.allLocations?{}:{locationId:{in:[...request.auth.locationIds]}};
+    return {lots:await prisma.inventoryLot.findMany({where:{tenantId:request.auth.tenantId,quantityOnHand:{gt:0},...locationFilter,...(expiry?{expiryDate:{lte:expiry}}:{})},include:{productVariant:{include:{product:true}},location:true},orderBy:{expiryDate:'asc'},take:500})};
   });
 
   app.get('/v1/inventory/serials', { preHandler: requirePermission('inventory.read') }, async request => {
     const q=z.object({locationId:z.string().optional(),productVariantId:z.string().optional(),status:z.enum(['AVAILABLE','RESERVED','SOLD','IN_TRANSIT','DAMAGED','RETIRED']).optional(),q:z.string().max(200).optional()}).parse(request.query);
     if(q.locationId) assertLocationAccess(request,q.locationId);
-    return {serials:await prisma.inventorySerial.findMany({where:{tenantId:request.auth.tenantId,locationId:q.locationId,productVariantId:q.productVariantId,status:q.status,serialNumber:q.q?{contains:q.q,mode:'insensitive'}:undefined},include:{productVariant:{include:{product:true}},location:true},orderBy:{updatedAt:'desc'},take:200})};
+    const locationFilter=q.locationId?{locationId:q.locationId}:request.auth.allLocations?{}:{locationId:{in:[...request.auth.locationIds]}};
+    return {serials:await prisma.inventorySerial.findMany({where:{tenantId:request.auth.tenantId,...locationFilter,productVariantId:q.productVariantId,status:q.status,serialNumber:q.q?{contains:q.q,mode:'insensitive'}:undefined},include:{productVariant:{include:{product:true}},location:true},orderBy:{updatedAt:'desc'},take:200})};
   });
 
   app.post('/v1/inventory/adjustments', { preHandler: requirePermission('inventory.adjust') }, async request => {
