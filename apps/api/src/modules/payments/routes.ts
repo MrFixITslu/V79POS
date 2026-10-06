@@ -21,6 +21,11 @@ export async function paymentRoutes(app: FastifyInstance) {
     const body = z.object({ connectionId: z.string(), amount: z.coerce.number().positive(), currency: z.string().length(3), idempotencyKey: z.string().min(8).max(200), saleId: z.string().optional(), metadata: z.record(z.string(), z.unknown()).optional() }).parse(request.body);
     const connection = await prisma.paymentProviderConnection.findFirst({ where: { id: body.connectionId, tenantId: request.auth.tenantId, active: true } });
     if (!connection) throw notFound('Payment connection not found');
+    if (body.saleId) {
+      const sale = await prisma.sale.findFirst({ where: { id: body.saleId, tenantId: request.auth.tenantId } });
+      if (!sale) throw notFound('Sale not found for this workspace');
+      if (sale.currency !== body.currency.toUpperCase()) throw conflict('Payment intent currency must match the sale currency');
+    }
     const existing = await prisma.paymentIntent.findUnique({ where: { tenantId_idempotencyKey: { tenantId: request.auth.tenantId, idempotencyKey: body.idempotencyKey } } });
     if (existing) return existing;
     const config = decryptJson<Record<string, unknown>>(connection.encryptedConfig);
