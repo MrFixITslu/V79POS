@@ -21,14 +21,25 @@ export async function teamRoutes(app: FastifyInstance) {
   }));
 
   app.get('/v1/team', { preHandler: requirePermission('team.read') }, async request => {
-    return { members: await prisma.membership.findMany({ where: { tenantId: request.auth.tenantId, active: true }, include: { role: true, locationAccess: { include: { location: true } } }, orderBy: { createdAt: 'asc' } }) };
+    return { members: await prisma.membership.findMany({
+      where: {
+        tenantId: request.auth.tenantId,
+        active: true,
+        ...(request.auth.allLocations ? {} : { locationAccess: { some: { locationId: { in: [...request.auth.locationIds] } } } })
+      },
+      include: { role: true, locationAccess: { include: { location: true } } },
+      orderBy: { createdAt: 'asc' }
+    }) };
   });
 
   app.post('/v1/team', { preHandler: requirePermission('team.write') }, async request => {
     const body = membershipSchema.parse(request.body);
     const role = await prisma.tenantRole.findUnique({ where: { tenantId_key: { tenantId: request.auth.tenantId, key: body.roleKey } } });
     if (!role) throw notFound('Role not found');
+    if (body.userId === request.auth.userId && request.auth.roleKey !== 'OWNER') throw conflict('You cannot change your own POS role or location access');
     if (['OWNER', 'ADMIN'].includes(body.roleKey) && request.auth.roleKey !== 'OWNER') throw conflict('Only an owner can assign owner or admin roles');
+    if (!request.auth.allLocations && body.locationIds.some(locationId => !request.auth.locationIds.has(locationId))) throw conflict('You cannot assign access outside your own locations');
+    if (request.auth.roleKey === 'MANAGER' && !['MANAGER','SUPERVISOR','CASHIER','INVENTORY','PURCHASING','DELIVERY'].includes(body.roleKey)) throw conflict('Managers cannot assign finance, audit, admin or owner roles');
     const locations = await prisma.location.findMany({ where: { tenantId: request.auth.tenantId, id: { in: body.locationIds }, active: true }, select: { id: true } });
     if (locations.length !== new Set(body.locationIds).size) throw notFound('One or more locations were not found');
 
