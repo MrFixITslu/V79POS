@@ -83,7 +83,7 @@ export async function orderRoutes(app: FastifyInstance) {
         const intent=await tx.paymentIntent.findFirst({where:{id:body.paymentIntentId,tenantId:order.tenantId,status:'SUCCEEDED',paymentId:null}});
         if(!intent||intent.amount.toNumber()!==body.amount||intent.currency!==order.currency) throw conflict('Payment intent is missing, already used, or does not match this order payment');
         paymentIntentId=intent.id;
-        providerRef=intent.providerRef;
+        providerRef=intent.providerRef ?? undefined;
       } else if(body.method!=='CASH'&&!providerRef) throw conflict('External payment requires providerRef');
       const payment=await tx.payment.create({data:{tenantId:order.tenantId,commerceOrderId:order.id,registerSessionId:body.registerSessionId,method:PaymentMethod[body.method],status:PaymentStatus.COMPLETED,amount:body.amount,provider:body.provider,providerRef}});
       if(paymentIntentId) await tx.paymentIntent.update({where:{id:paymentIntentId},data:{paymentId:payment.id}});
