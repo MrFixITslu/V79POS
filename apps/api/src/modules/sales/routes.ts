@@ -14,6 +14,7 @@ import { consumeFifoCost } from '../inventory/costing.js';
 import { resolvePromotions, resolveUnitPrices, promotionDiscount } from '../pricing/service.js';
 import { creditInternalTender, debitInternalTender, earnLoyalty } from '../value/service.js';
 import { recordCommission, reverseCommissionForRefund } from '../team/commission.js';
+import { verifyCashierProof } from '../../lib/cashier-proof.js';
 
 const saleSchema = z.object({
   locationId: z.string().min(1),
@@ -26,6 +27,7 @@ const saleSchema = z.object({
   occurredAt: z.coerce.date().optional(),
   customerId: z.string().optional(),
   salespersonUserId: z.string().optional(),
+  salespersonProof: z.string().max(1000).optional(),
   promotionCode: z.string().min(2).max(50).optional(),
   lines: z.array(z.object({
     productVariantId: z.string().min(1),
@@ -105,6 +107,19 @@ export async function salesRoutes(app: FastifyInstance) {
       if (body.customerId) {
         const customer = await tx.customer.findFirst({ where: { id: body.customerId, tenantId: tenant.id } });
         if (!customer) throw notFound('Customer not found');
+      }
+      const salespersonUserId = body.salespersonUserId ?? request.auth.userId;
+      const salesperson = await tx.membership.findUnique({
+        where: { tenantId_userId: { tenantId: tenant.id, userId: salespersonUserId } },
+        include: { locationAccess: true }
+      });
+      if (!salesperson?.active) throw conflict('Salesperson is not an active member of this workspace');
+      const salespersonHasLocation = ['OWNER','ADMIN'].includes(salesperson.roleKey) || salesperson.locationAccess.some(row => row.locationId === body.locationId);
+      if (!salespersonHasLocation) throw conflict('Salesperson is not assigned to this location');
+      if (salespersonUserId !== request.auth.userId) {
+        if (!body.salespersonProof || !verifyCashierProof(body.salespersonProof, { tenantId: tenant.id, locationId: body.locationId, userId: salespersonUserId })) {
+          throw conflict('A recent cashier PIN verification is required to attribute this sale to another salesperson');
+        }
       }
 
       const variantIds = [...new Set(body.lines.map(line => line.productVariantId))];
@@ -201,7 +216,7 @@ export async function salesRoutes(app: FastifyInstance) {
           amountPaid,
           changeDue: Math.max(0, amountPaid - totals.total),
           createdBy: request.auth.userId,
-          salespersonUserId: body.salespersonUserId ?? request.auth.userId,
+          salespersonUserId,
           completedAt: effectiveAt ?? new Date()
         }
       });
