@@ -59,7 +59,8 @@ export async function replenishmentRoutes(app: FastifyInstance) {
   });
 
   app.post('/v1/replenishment/recalculate', { preHandler: requirePermission('replenishment.run') }, async request => {
-    return { recommendations: await recalculateTenant(request.auth.tenantId) };
+    const recommendations = await recalculateTenant(request.auth.tenantId);
+    return { recommendations: recommendations.filter(row => request.auth.allLocations || request.auth.locationIds.has(row.locationId)) };
   });
 
   app.post('/v1/replenishment/create-draft-pos', { preHandler: [requirePermission('replenishment.read'), requirePermission('procurement.write')] }, async request => {
