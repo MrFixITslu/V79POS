@@ -1,11 +1,13 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { SignJWT, createRemoteJWKSet, jwtVerify } from 'jose';
+import { createHash } from 'node:crypto';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { unauthorized } from '../../lib/errors.js';
 import { builtInPermissions, type AuthContext } from './context.js';
 
 const jwks = createRemoteJWKSet(new URL(config.HUB_JWKS_URL));
+const posSessionKey = createHash('sha256').update(config.ENCRYPTION_KEY).digest();
 
 function bearer(request: FastifyRequest) {
   const header = request.headers.authorization;
@@ -23,6 +25,21 @@ export async function verifyHubAccessToken(token: string) {
   return jwtVerify(token, jwks, { issuer: config.JWT_ISSUER, audience: config.JWT_AUDIENCE });
 }
 
+export async function issuePosSession(userId: string, tenantId: string) {
+  return new SignJWT({ tenant_id: tenantId, token_type: 'v79_pos_session' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(userId)
+    .setIssuer('v79-pos')
+    .setAudience('v79-pos-session')
+    .setIssuedAt()
+    .setExpirationTime(`${config.POS_SESSION_HOURS}h`)
+    .sign(posSessionKey);
+}
+
+async function verifyPosSession(token: string) {
+  return jwtVerify(token, posSessionKey, { issuer: 'v79-pos', audience: 'v79-pos-session' });
+}
+
 async function userFromRequest(request: FastifyRequest): Promise<{ userId: string; tokenTenantId?: string }> {
   if (config.AUTH_MODE === 'dev') {
     if (config.NODE_ENV === 'production') throw unauthorized('Development authentication is disabled in production');
@@ -31,7 +48,17 @@ async function userFromRequest(request: FastifyRequest): Promise<{ userId: strin
     return { userId };
   }
 
-  const verified = await verifyHubAccessToken(bearer(request));
+  const token = bearer(request);
+  let verified;
+  try {
+    verified = await verifyHubAccessToken(token);
+  } catch {
+    try {
+      verified = await verifyPosSession(token);
+    } catch {
+      throw unauthorized('POS session is invalid or expired');
+    }
+  }
   if (!verified.payload.sub) throw unauthorized('Token subject is missing');
   const tenantClaim = typeof verified.payload.tenant_id === 'string' ? verified.payload.tenant_id : undefined;
   return { userId: verified.payload.sub, tokenTenantId: tenantClaim };
@@ -41,7 +68,7 @@ export async function registerAuth(app: FastifyInstance) {
   app.decorateRequest('auth', undefined as unknown as AuthContext);
 
   app.addHook('onRequest', async request => {
-    if (request.url === '/' || request.url === '/favicon.svg' || request.url === '/app.js' || request.url === '/app.css' || request.url === '/health' || request.url === '/ready' || request.url === '/auth/launch' || request.url === '/auth/logout' || request.url.startsWith('/v1/payments/webhooks/') || request.url.startsWith('/api/platform/')) return;
+    if (request.url === '/' || request.url === '/favicon.svg' || request.url === '/app.js' || request.url === '/app.css' || request.url === '/health' || request.url === '/ready' || request.url === '/auth/launch' || request.url === '/auth/exchange' || request.url === '/auth/logout' || request.url.startsWith('/v1/payments/webhooks/') || request.url.startsWith('/api/platform/')) return;
 
     if (!request.headers.authorization && !['GET','HEAD','OPTIONS'].includes(request.method) && request.headers.origin !== new URL(config.POS_PUBLIC_URL).origin) {
       throw unauthorized('Invalid request origin');
