@@ -1,5 +1,6 @@
 import { prisma } from './prisma.js';
 import { decryptJson, hmacHex } from './crypto.js';
+import { assertSafeWebhookUrl } from './safe-webhook-url.js';
 
 export async function processOutboxBatch(limit = 100) {
   const events = await prisma.outboxEvent.findMany({ where: { publishedAt: null }, orderBy: { createdAt: 'asc' }, take: limit });
@@ -20,6 +21,7 @@ export async function processOutboxBatch(limit = 100) {
       const body = JSON.stringify(payload);
       const { secret } = decryptJson<{secret:string}>(delivery.endpoint.encryptedSecret);
       try {
+        await assertSafeWebhookUrl(delivery.endpoint.url);
         const response = await fetch(delivery.endpoint.url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-v79-event-id': event.id, 'x-v79-signature': hmacHex(secret, body) }, body, signal: AbortSignal.timeout(15_000) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         await prisma.outboxDelivery.update({ where: { id: delivery.id }, data: { deliveredAt: new Date(), responseCode: response.status, attempts: { increment: 1 }, lastError: null } });
