@@ -70,15 +70,23 @@ export async function orderRoutes(app: FastifyInstance) {
 
   app.post('/v1/orders/:id/payments', { preHandler: requirePermission('orders.write') }, async request=>{
     const {id}=z.object({id:z.string()}).parse(request.params);
-    const body=z.object({registerSessionId:z.string().optional(),method:z.enum(paymentMethods),amount:z.coerce.number().positive(),provider:z.string().max(100).optional(),providerRef:z.string().max(200).optional(),accountCode:z.string().max(100).optional()}).parse(request.body);
+    const body=z.object({registerSessionId:z.string().optional(),method:z.enum(paymentMethods),amount:z.coerce.number().positive(),provider:z.string().max(100).optional(),providerRef:z.string().max(200).optional(),paymentIntentId:z.string().optional(),accountCode:z.string().max(100).optional()}).parse(request.body);
     return serializable(async tx=>{
       const order=await tx.commerceOrder.findFirst({where:{id,tenantId:request.auth.tenantId,status:{notIn:[CommerceOrderStatus.CANCELLED,CommerceOrderStatus.EXPIRED,CommerceOrderStatus.COMPLETED]}}}); if(!order) throw notFound('Open order not found'); assertLocationAccess(request,order.locationId);
       if(order.amountPaid.plus(body.amount).gt(order.total)) throw conflict('Payment exceeds outstanding balance');
       if(body.registerSessionId){const session=await tx.registerSession.findFirst({where:{id:body.registerSessionId,tenantId:order.tenantId,locationId:order.locationId,status:'OPEN'}});if(!session) throw conflict('Register session is not open');}
       let providerRef=body.providerRef;
+      let paymentIntentId:string|undefined;
       if(['STORE_CREDIT','GIFT_CARD','LOYALTY_POINTS'].includes(body.method)) providerRef=await debitInternalTender(tx,{tenantId:order.tenantId,customerId:order.customerId??undefined,method:body.method as any,amount:body.amount,accountCode:body.accountCode,referenceType:'COMMERCE_ORDER',referenceId:order.id,userId:request.auth.userId});
-      else if(body.method!=='CASH'&&!providerRef) throw conflict('External payment requires providerRef');
-      await tx.payment.create({data:{tenantId:order.tenantId,commerceOrderId:order.id,registerSessionId:body.registerSessionId,method:PaymentMethod[body.method],status:PaymentStatus.COMPLETED,amount:body.amount,provider:body.provider,providerRef}});
+      else if(body.method==='CARD'){
+        if(!body.paymentIntentId) throw conflict('CARD payments require a succeeded payment intent');
+        const intent=await tx.paymentIntent.findFirst({where:{id:body.paymentIntentId,tenantId:order.tenantId,status:'SUCCEEDED',paymentId:null}});
+        if(!intent||intent.amount.toNumber()!==body.amount||intent.currency!==order.currency) throw conflict('Payment intent is missing, already used, or does not match this order payment');
+        paymentIntentId=intent.id;
+        providerRef=intent.providerRef;
+      } else if(body.method!=='CASH'&&!providerRef) throw conflict('External payment requires providerRef');
+      const payment=await tx.payment.create({data:{tenantId:order.tenantId,commerceOrderId:order.id,registerSessionId:body.registerSessionId,method:PaymentMethod[body.method],status:PaymentStatus.COMPLETED,amount:body.amount,provider:body.provider,providerRef}});
+      if(paymentIntentId) await tx.paymentIntent.update({where:{id:paymentIntentId},data:{paymentId:payment.id}});
       const paid=order.amountPaid.plus(body.amount), status=paid.gte(order.total)?CommerceOrderStatus.PAID:CommerceOrderStatus.PARTIALLY_PAID;
       return tx.commerceOrder.update({where:{id},data:{amountPaid:paid,status}});
     });
