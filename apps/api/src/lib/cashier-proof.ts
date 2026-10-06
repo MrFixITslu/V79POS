@@ -9,7 +9,8 @@ type CashierProof = {
   nonce: string;
 };
 
-const sign = (payload: string) => createHmac('sha256', config.ENCRYPTION_KEY).update(payload).digest('hex');
+const proofKey = createHmac('sha256', config.ENCRYPTION_KEY).update('v79-pos/cashier-proof/v1').digest();
+const sign = (payload: string) => createHmac('sha256', proofKey).update(payload).digest('hex');
 
 export function issueCashierProof(input: Omit<CashierProof, 'expiresAt' | 'nonce'>, ttlMs = 5 * 60_000) {
   const body: CashierProof = {
