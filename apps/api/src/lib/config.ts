@@ -11,6 +11,7 @@ const schema = z.object({
   HUB_JWKS_URL: z.string().url().default('https://hub.v79sl.com/.well-known/jwks.json'),
   HUB_INTERNAL_URL: z.string().url().default('https://hub.v79sl.com'),
   POS_PUBLIC_URL: z.string().url().default('https://pos.v79sl.com'),
+  POS_SESSION_HOURS: z.coerce.number().int().min(1).max(24).default(8),
   V79_PLATFORM_SHARED_SECRET: z.string().default(''),
   CORS_ORIGINS: z.string().default(''),
   REPLENISHMENT_INTERVAL_MINUTES: z.coerce.number().int().min(5).default(60),
