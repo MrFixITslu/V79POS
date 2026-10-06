@@ -41,6 +41,7 @@ const saleSchema = z.object({
     amount: z.coerce.number().positive(),
     provider: z.string().max(100).optional(),
     providerRef: z.string().max(200).optional(),
+    paymentIntentId: z.string().optional(),
     accountCode: z.string().max(100).optional()
   })).min(1)
 });
@@ -187,9 +188,17 @@ export async function salesRoutes(app: FastifyInstance) {
       if (amountPaid > totals.total + 0.0001 && !body.payments.some(p => p.method === 'CASH')) {
         throw conflict('Overpayment is only allowed when cash is included so change can be returned');
       }
+      const verifiedPaymentIntents = new Map<string, { id: string; providerRef: string | null }>();
       for (const payment of body.payments) {
         const internal = ['STORE_CREDIT','GIFT_CARD','LOYALTY_POINTS'].includes(payment.method);
-        if (!internal && payment.method !== 'CASH' && !payment.providerRef) {
+        if (payment.method === 'CARD') {
+          if (!payment.paymentIntentId) throw conflict('CARD payments require a succeeded payment intent');
+          const intent = await tx.paymentIntent.findFirst({
+            where: { id: payment.paymentIntentId, tenantId: tenant.id, status: 'SUCCEEDED', paymentId: null }
+          });
+          if (!intent || intent.amount.toNumber() !== payment.amount || intent.currency !== tenant.currency) throw conflict('Payment intent is missing, already used, or does not match this sale');
+          verifiedPaymentIntents.set(payment.paymentIntentId, { id: intent.id, providerRef: intent.providerRef });
+        } else if (!internal && payment.method !== 'CASH' && !payment.providerRef) {
           throw conflict(`providerRef is required for ${payment.method} payments until direct payment adapters are configured`);
         }
         if (payment.method === 'GIFT_CARD' && !payment.accountCode) throw conflict('Gift card code is required');
@@ -294,10 +303,14 @@ export async function salesRoutes(app: FastifyInstance) {
             amount: payment.amount, accountCode: payment.accountCode, referenceId: sale.id, userId: request.auth.userId
           });
         }
-        payments.push(await tx.payment.create({ data: {
+        const verifiedIntent = payment.paymentIntentId ? verifiedPaymentIntents.get(payment.paymentIntentId) : undefined;
+        if (verifiedIntent?.providerRef) providerRef = verifiedIntent.providerRef;
+        const recordedPayment = await tx.payment.create({ data: {
           tenantId: tenant.id, saleId: sale.id, method: PaymentMethod[payment.method], status: PaymentStatus.COMPLETED,
           amount: payment.amount, registerSessionId: registerSession?.id, provider: payment.provider ?? (['STORE_CREDIT','GIFT_CARD','LOYALTY_POINTS'].includes(payment.method) ? 'V79_INTERNAL' : undefined), providerRef
-        }}));
+        }});
+        if (verifiedIntent) await tx.paymentIntent.update({ where: { id: verifiedIntent.id }, data: { paymentId: recordedPayment.id, saleId: sale.id } });
+        payments.push(recordedPayment);
       }
       const loyaltyPointsEarned = await earnLoyalty(tx, { tenantId: tenant.id, customerId: body.customerId, saleId: sale.id, eligibleAmount: totals.total });
 
