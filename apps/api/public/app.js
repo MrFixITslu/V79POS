@@ -595,7 +595,7 @@ const pages = {
   register,
   products,
   inventory,
-  stockControl,
+  "stock-control": stockControl,
   customers,
   sales,
   orders,
