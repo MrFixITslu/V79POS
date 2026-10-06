@@ -41,7 +41,7 @@ async function expectedCash(tx: Prisma.TransactionClient, sessionId: string) {
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/v1/registers', { preHandler: requirePermission('register.read') }, async request => ({
     registers: await prisma.register.findMany({
-      where: { tenantId: request.auth.tenantId, active: true },
+      where: { tenantId: request.auth.tenantId, active: true, ...(request.auth.allLocations ? {} : { locationId: { in: [...request.auth.locationIds] } }) },
       include: { location: true, sessions: { where: { status: RegisterSessionStatus.OPEN }, take: 1 } },
       orderBy: { name: 'asc' }
     })
