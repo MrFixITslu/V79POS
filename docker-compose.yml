@@ -11,7 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - proxy_network
+      - pos_internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U v79commerce -d v79commerce"]
       interval: 5s
@@ -26,7 +26,7 @@ services:
     volumes:
       - redis_data:/data
     networks:
-      - proxy_network
+      - pos_internal
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -48,7 +48,7 @@ services:
         condition: service_healthy
     command: ["sh", "-c", "./node_modules/.bin/prisma migrate deploy"]
     networks:
-      - proxy_network
+      - pos_internal
     restart: "no"
 
   api:
@@ -75,6 +75,7 @@ services:
     expose:
       - "8080"
     networks:
+      pos_internal:
       proxy_network:
         aliases:
           - v79-commerce-api
@@ -106,6 +107,7 @@ services:
         condition: service_healthy
     command: ["node", "apps/api/dist/worker.js"]
     networks:
+      - pos_internal
       - proxy_network
     security_opt:
       - no-new-privileges:true
@@ -114,6 +116,8 @@ services:
     restart: unless-stopped
 
 networks:
+  pos_internal:
+    internal: true
   proxy_network:
     external: true
     name: ${PROXY_NETWORK:-proxy_network}
