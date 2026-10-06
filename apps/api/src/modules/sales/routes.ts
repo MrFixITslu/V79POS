@@ -56,7 +56,17 @@ export async function salesRoutes(app: FastifyInstance) {
         tenantId: request.auth.tenantId,
         ...(query.locationId ? { locationId: query.locationId } : allowedLocations ? { locationId: { in: allowedLocations } } : {})
       },
-      include: { lines: true, payments: true, customer: true },
+      include: {
+        lines: {
+          include: {
+            productVariant: { include: { product: true } },
+            lotAllocations: { include: { lot: { select: { id: true, lotNumber: true, expiryDate: true } } } },
+            serials: { include: { serial: { select: { id: true, serialNumber: true } } } }
+          }
+        },
+        payments: true,
+        customer: true
+      },
       orderBy: { createdAt: 'desc' },
       take: query.limit
     });
