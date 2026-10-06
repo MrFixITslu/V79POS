@@ -10,7 +10,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { config, corsOrigins } from './lib/config.js';
 import { prisma } from './lib/prisma.js';
 import { AppError } from './lib/errors.js';
-import { registerAuth, verifyHubAccessToken } from './modules/auth/plugin.js';
+import { issuePosSession, registerAuth, verifyHubAccessToken } from './modules/auth/plugin.js';
 import { catalogueRoutes } from './modules/catalogue/routes.js';
 import { inventoryRoutes } from './modules/inventory/routes.js';
 import { transferRoutes } from './modules/inventory/transfers.js';
@@ -75,6 +75,7 @@ app.get('/ready', async (_request, reply) => {
 // Exchange a single-use Hub launch ticket on the server. The JWT never goes
 // into a browser URL or JavaScript state; the browser receives an HttpOnly cookie.
 const sessionCookie = (value: string, maxAge: number) => `v79_pos_session=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${config.NODE_ENV === 'production' ? '; Secure' : ''}`;
+const posSessionMaxAge = config.POS_SESSION_HOURS * 3600;
 app.post('/auth/launch', async (request, reply) => {
   if (request.headers.origin !== new URL(config.POS_PUBLIC_URL).origin) return reply.code(403).send({ error: 'Invalid request origin' });
   const body = (request.body ?? {}) as { ticket?: unknown };
@@ -96,16 +97,31 @@ app.post('/auth/launch', async (request, reply) => {
     if (!launch.token || !launch.tenantId) return reply.code(502).send({ error: 'Hub returned an invalid POS launch' });
     const verified = await verifyHubAccessToken(launch.token);
     if (verified.payload.tenant_id !== launch.tenantId || !verified.payload.sub) return reply.code(502).send({ error: 'Hub POS identity mismatch' });
-    const remaining = Math.max(0, Math.min(300, Number(verified.payload.exp ?? 0) - Math.floor(Date.now()/1000)));
-    if (!remaining) return reply.code(401).send({ error: 'Hub POS token expired' });
-    reply.header('set-cookie', sessionCookie(launch.token, remaining));
+    const session = await issuePosSession(verified.payload.sub, launch.tenantId);
+    reply.header('set-cookie', sessionCookie(session, posSessionMaxAge));
     reply.header('cache-control', 'no-store');
-    return { connected: true };
+    return { connected: true, expiresIn: posSessionMaxAge };
   } catch (error) {
     request.log.warn({ err: error }, 'POS launch exchange failed');
     return reply.code(503).send({ error: 'Hub launch is unavailable. Try again from Hub.' });
   }
 });
+app.post('/auth/exchange', async (request, reply) => {
+  if (request.headers.origin !== new URL(config.POS_PUBLIC_URL).origin) return reply.code(403).send({ error: 'Invalid request origin' });
+  const header = request.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return reply.code(401).send({ error: 'Hub bearer token required' });
+  try {
+    const verified = await verifyHubAccessToken(header.slice(7));
+    if (!verified.payload.sub || typeof verified.payload.tenant_id !== 'string') return reply.code(401).send({ error: 'Hub POS identity is incomplete' });
+    const session = await issuePosSession(verified.payload.sub, verified.payload.tenant_id);
+    reply.header('set-cookie', sessionCookie(session, posSessionMaxAge));
+    reply.header('cache-control', 'no-store');
+    return { connected: true, tenantId: verified.payload.tenant_id, expiresIn: posSessionMaxAge };
+  } catch {
+    return reply.code(401).send({ error: 'Hub POS token is invalid or expired' });
+  }
+});
+
 app.post('/auth/logout', async (request, reply) => {
   if (request.headers.origin !== new URL(config.POS_PUBLIC_URL).origin) return reply.code(403).send({ error: 'Invalid request origin' });
   reply.header('set-cookie', sessionCookie('', 0));
