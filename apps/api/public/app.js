@@ -25,6 +25,7 @@ const tabs = [
   ["register", "Register", "▣"],
   ["products", "Products", "◇"],
   ["inventory", "Inventory", "▤"],
+  ["stock-control", "Stock Control", "⇄"],
   ["customers", "Customers", "♙"],
   ["sales", "Sales", "◴"],
   ["orders", "Orders", "▧"],
@@ -43,6 +44,8 @@ const state = {
   selectedSale: "",
   selectedReturnLine: "",
   selectedCommerceOrder: "",
+  selectedStockCount: "",
+  selectedStockCountLine: "",
   search: "",
   demo: false,
   busy: false,
@@ -118,6 +121,10 @@ function demoData() {
         ],
       },
     ],
+    locations: [
+      { id: "loc1", name: "Main Store", code: "MAIN", type: "STORE" },
+      { id: "loc2", name: "Warehouse", code: "WH", type: "WAREHOUSE" },
+    ],
     registers: [
       {
         id: "reg1",
@@ -181,6 +188,8 @@ function demoData() {
       },
     ],
     purchaseOrders: [],
+    transfers: [],
+    stockCounts: [],
     recommendations: [
       {
         id: "r1",
@@ -244,6 +253,9 @@ async function load() {
     ["products", "/v1/products", "catalogue.read"],
     ["registers", "/v1/registers", "register.read"],
     ["inventory", "/v1/inventory", "inventory.read"],
+    ["locations", "/v1/locations", "inventory.read"],
+    ["transfers", "/v1/transfers", "inventory.read"],
+    ["stockCounts", "/v1/stock-counts", "inventory.read"],
     ["customers", "/v1/customers?limit=200", "customers.read"],
     ["sales", "/v1/sales?limit=50", "sales.read"],
     ["orders", "/v1/orders?limit=100", "orders.read"],
@@ -446,6 +458,31 @@ function inventory() {
     `<section class="card section">${rows.length ? table(["Product", "Location", "On hand", "Available", "Status"], rows) : empty("No stock balances yet. Receive stock or make an authorised adjustment.")}</section>`
   );
 }
+function stockControl() {
+  if (!can("inventory.read"))
+    return header("Stock Control", "Counts and branch transfers") + needs("inventory.read");
+  const transfers = (state.data.transfers || []).map((x) => {
+    const actions = [];
+    if (can("inventory.transfer") && x.status === "REQUESTED") actions.push(`<button class="btn compact" data-transfer-action="approve" data-transfer="${h(x.id)}">Approve</button>`);
+    if (can("inventory.transfer") && x.status === "APPROVED") actions.push(`<button class="btn compact" data-transfer-action="dispatch" data-transfer="${h(x.id)}">Dispatch</button>`);
+    if (can("inventory.transfer") && x.status === "IN_TRANSIT") actions.push(`<button class="btn compact primary" data-transfer-action="receive" data-transfer="${h(x.id)}">Receive</button>`);
+    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.fromLocation?.name)} → ${h(x.toLocation?.name)}</td><td>${h(x.lines?.length || 0)} line(s)</td><td>${badge(x.status)}</td><td><div class="actions">${actions.join("")}</div></td></tr>`;
+  });
+  const counts = (state.data.stockCounts || []).map((x) => {
+    const actions = [];
+    if (can("inventory.count") && x.status === "IN_PROGRESS") actions.push(`<button class="btn compact" data-count-action="count" data-count="${h(x.id)}">Enter count</button>`);
+    if (can("inventory.count.approve") && x.status === "SUBMITTED") actions.push(`<button class="btn compact primary" data-count-action="complete" data-count="${h(x.id)}">Post variance</button>`);
+    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.startedAt || x.createdAt))}</small></td><td>${h((state.data.locations || []).find(l => l.id === x.locationId)?.name || x.locationId)}</td><td>${h(x.type)}</td><td>${badge(x.status)}</td><td><div class="actions">${actions.join("")}</div></td></tr>`;
+  });
+  return (
+    header(
+      "Stock control",
+      "Cycle counts, stock corrections and location transfers",
+      `<div class="actions">${can("inventory.count") ? '<button class="btn" data-modal="stock-count">+ Cycle count</button>' : ""}${can("inventory.transfer") ? '<button class="btn primary" data-modal="stock-transfer">+ Transfer stock</button>' : ""}</div>`,
+    ) +
+    `<div class="split"><section class="card section"><div class="row"><div><h2>Stock transfers</h2><p class="section-note">Move sellable stock between assigned locations</p></div></div>${transfers.length ? table(["Transfer","Route","Items","Status","Actions"],transfers) : empty("No stock transfers yet.")}</section><section class="card section"><div><h2>Cycle counts</h2><p class="section-note">Count selected products and post approved variances</p></div>${counts.length ? table(["Count","Location","Type","Status","Actions"],counts) : empty("No stock counts yet.")}</section></div>`
+  );
+}
 function customers() {
   if (!can("customers.read"))
     return header("Customers", "Customer directory") + needs("customers.read");
@@ -558,6 +595,7 @@ const pages = {
   register,
   products,
   inventory,
+  stockControl,
   customers,
   sales,
   orders,
@@ -576,14 +614,46 @@ function modal(title, contents, id, button = "Save") {
   dialog.querySelector("input,select")?.focus();
 }
 function openModal(name) {
-  const locations = [
-    ...new Map(
-      (state.data.registers || []).map((r) => [
-        r.locationId,
-        [r.locationId, r.location?.name || r.name],
-      ]),
-    ).values(),
-  ];
+  const locations = (state.data.locations || []).map((location) => [location.id, location.name]);
+  if (name === "stock-count")
+    modal(
+      "Start cycle count",
+      select("locationId", "Location", locations) +
+        select("variantId", "Product", variants().filter((v) => v.trackStock).map((v) => [v.id, `${v.product.name} · ${v.sku}`])) +
+        `<div class="field wide"><label for="notes">Notes</label><textarea id="notes" name="notes" maxlength="1000"></textarea></div>`,
+      "stock-count-form",
+      "Start count",
+    );
+  if (name === "stock-count-line") {
+    const count = state.data.activeStockCount;
+    const line = count?.lines?.find((row) => row.id === state.selectedStockCountLine) || count?.lines?.[0];
+    if (!count || !line) return toast("Stock count line not found", true);
+    state.selectedStockCountLine = line.id;
+    const expected = line.expectedQty === undefined ? "" : `<div class="field wide notice">System quantity: <strong>${h(line.expectedQty)}</strong>. Enter the physical quantity you counted.</div>`;
+    modal(
+      `Count ${count.number}`,
+      expected +
+        `<div class="field wide"><strong>${h(line.productVariant?.product?.name || "Product")}</strong><div class="muted">${h(line.productVariant?.sku || "")}</div></div>` +
+        field("countedQty", "Physical quantity", "number", line.countedQty ?? "", 'required min="0" step="any"') +
+        field("notes", "Count note"),
+      "stock-count-line-form",
+      "Save & submit",
+    );
+  }
+  if (name === "stock-transfer") {
+    const simpleVariants = variants().filter((v) => v.trackStock && !["SERIALIZED","LOT_TRACKED"].includes(v.product?.productType) && !v.requiresExpiry);
+    modal(
+      "Transfer stock",
+      `<div class="field wide notice">Standard stock can be transferred here. Lot, expiry and serialized stock stays on the advanced tracked-item workflow until a guided allocation screen is added.</div>` +
+        select("fromLocationId", "From location", locations) +
+        select("toLocationId", "To location", locations) +
+        select("variantId", "Product", simpleVariants.map((v) => [v.id, `${v.product.name} · ${v.sku}`])) +
+        field("quantity", "Quantity", "number", "1", 'required min="0.001" step="any"') +
+        `<div class="field wide"><label for="notes">Notes</label><textarea id="notes" name="notes" maxlength="1000"></textarea></div>`,
+      "stock-transfer-form",
+      "Create transfer",
+    );
+  }
   if (name === "product")
     modal(
       "Add a product",
@@ -1029,6 +1099,46 @@ document.addEventListener("submit", async (event) => {
   try {
     let result;
     switch (form.id) {
+      case "stock-count-form":
+        result = await api("/v1/stock-counts", {
+          method: "POST",
+          body: JSON.stringify({
+            locationId: v.get("locationId"),
+            type: "CYCLE",
+            productVariantIds: [v.get("variantId")],
+            notes: v.get("notes") || undefined
+          })
+        });
+        break;
+      case "stock-count-line-form": {
+        const count = state.data.activeStockCount;
+        const line = count?.lines?.find((row) => row.id === state.selectedStockCountLine);
+        if (!count || !line) throw Error("Stock count line not found.");
+        await api(`/v1/stock-counts/${encodeURIComponent(count.id)}/lines/${encodeURIComponent(line.id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ countedQty: Number(v.get("countedQty")), notes: v.get("notes") || undefined })
+        });
+        result = await api(`/v1/stock-counts/${encodeURIComponent(count.id)}/submit`, { method: "POST" });
+        state.data.activeStockCount = null;
+        state.selectedStockCount = "";
+        state.selectedStockCountLine = "";
+        break;
+      }
+      case "stock-transfer-form": {
+        const fromLocationId = String(v.get("fromLocationId"));
+        const toLocationId = String(v.get("toLocationId"));
+        if (fromLocationId === toLocationId) throw Error("Choose two different locations.");
+        result = await api("/v1/transfers", {
+          method: "POST",
+          body: JSON.stringify({
+            fromLocationId,
+            toLocationId,
+            notes: v.get("notes") || undefined,
+            lines: [{ productVariantId: v.get("variantId"), quantity: Number(v.get("quantity")), lotAllocations: [], serialNumberIds: [] }]
+          })
+        });
+        break;
+      }
       case "product-form":
         result = await api("/v1/products", {
           method: "POST",
@@ -1358,7 +1468,7 @@ root.addEventListener("change", (event) => {
 });
 root.addEventListener("click", async (event) => {
   const target = event.target.closest(
-    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action]",
+    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action],[data-transfer-action],[data-count-action]",
   );
   if (!target) return;
   if (target.dataset.page) {
@@ -1388,6 +1498,44 @@ root.addEventListener("click", async (event) => {
       await load();
       render();
       toast("Purchase order approved");
+    } catch (err) {
+      toast(err.message, true);
+    }
+    return;
+  }
+  if (target.dataset.transferAction) {
+    if (state.demo) return toast("Demo mode is read-only.", true);
+    const id = target.dataset.transfer;
+    const action = target.dataset.transferAction;
+    if (!confirm(`${action[0].toUpperCase() + action.slice(1)} this stock transfer?`)) return;
+    try {
+      await api(`/v1/transfers/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+      await load();
+      render();
+      toast(`Transfer ${action} completed`);
+    } catch (err) {
+      toast(err.message, true);
+    }
+    return;
+  }
+  if (target.dataset.countAction) {
+    if (state.demo) return toast("Demo mode is read-only.", true);
+    const id = target.dataset.count;
+    const action = target.dataset.countAction;
+    try {
+      if (action === "count") {
+        const detail = await api(`/v1/stock-counts/${encodeURIComponent(id)}`);
+        state.selectedStockCount = id;
+        state.data.activeStockCount = detail;
+        state.selectedStockCountLine = detail.lines?.[0]?.id || "";
+        openModal("stock-count-line");
+      } else if (action === "complete") {
+        if (!confirm("Post this count variance to inventory?")) return;
+        await api(`/v1/stock-counts/${encodeURIComponent(id)}/complete`, { method: "POST" });
+        await load();
+        render();
+        toast("Stock count completed and variance posted");
+      }
     } catch (err) {
       toast(err.message, true);
     }
