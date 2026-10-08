@@ -101,9 +101,18 @@ export async function registerAuth(app: FastifyInstance) {
     if (!membership?.active || !membership.tenant.active) throw unauthorized('No active membership for this tenant');
     // The session JWT alone is not proof of a still-active Hub subscription.
     // Recheck a signed Hub entitlement at least every 30 seconds; fail closed.
-    if (checkHubEntitlement && !(await checkHubEntitlement({
-      organizationId: tenantId, scopedUserId: identity.userId,
-    }))) throw unauthorized('Your V79 Hub subscription is inactive or cannot be verified');
+    if (checkHubEntitlement) {
+      let entitled = false;
+      try {
+        entitled = await checkHubEntitlement({
+          organizationId: tenantId, scopedUserId: identity.userId,
+        });
+      } catch {
+        // Unexpected Hub checker errors must deny, not become uncaught API failures.
+        entitled = false;
+      }
+      if (!entitled) throw unauthorized('Your V79 Hub subscription is inactive or cannot be verified');
+    }
 
     const permissions = new Set([
       ...builtInPermissions(membership.roleKey),
