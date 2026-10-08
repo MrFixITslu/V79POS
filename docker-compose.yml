@@ -66,6 +66,8 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://pos.v79sl.com}
       V79_PLATFORM_SHARED_SECRET: ${V79_PLATFORM_SHARED_SECRET:?V79_PLATFORM_SHARED_SECRET is required}
+      V79_ENTITLEMENT_RECHECK_ENABLED: ${V79_ENTITLEMENT_RECHECK_ENABLED:-0}
+      V79_POS_PLATFORM_SHARED_SECRET: ${V79_POS_PLATFORM_SHARED_SECRET:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

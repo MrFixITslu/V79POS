@@ -13,6 +13,8 @@ const schema = z.object({
   POS_PUBLIC_URL: z.string().url().default('https://pos.v79sl.com'),
   POS_SESSION_HOURS: z.coerce.number().int().min(1).max(24).default(8),
   V79_PLATFORM_SHARED_SECRET: z.string().default(''),
+  V79_POS_PLATFORM_SHARED_SECRET: z.string().default(''),
+  V79_ENTITLEMENT_RECHECK_ENABLED: z.enum(['0', '1']).default('0'),
   CORS_ORIGINS: z.string().default(''),
   REPLENISHMENT_INTERVAL_MINUTES: z.coerce.number().int().min(5).default(60),
   LOG_LEVEL: z.string().default('info'),
@@ -29,6 +31,10 @@ if (parsed.NODE_ENV === 'production') {
   if (looksLikePlaceholder(parsed.ENCRYPTION_KEY)) throw new Error('ENCRYPTION_KEY must be changed in production');
   if (!parsed.CORS_ORIGINS.trim()) throw new Error('CORS_ORIGINS must be explicitly configured in production');
   if (!parsed.V79_PLATFORM_SHARED_SECRET.trim() || looksLikePlaceholder(parsed.V79_PLATFORM_SHARED_SECRET)) throw new Error('V79_PLATFORM_SHARED_SECRET must be configured in production');
+  if (parsed.V79_ENTITLEMENT_RECHECK_ENABLED === '1' &&
+      (parsed.V79_POS_PLATFORM_SHARED_SECRET || parsed.V79_PLATFORM_SHARED_SECRET).length < 32) {
+    throw new Error('Hub POS entitlement revalidation requires a 32+ character service secret');
+  }
 }
 export const config = parsed;
 export const corsOrigins = config.CORS_ORIGINS.split(',').map(v => v.trim()).filter(Boolean);
