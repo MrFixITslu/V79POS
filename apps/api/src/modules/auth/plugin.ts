@@ -4,9 +4,16 @@ import { createHmac } from 'node:crypto';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { unauthorized } from '../../lib/errors.js';
+import { createHubEntitlementChecker } from '../../lib/hubEntitlement.js';
 import { builtInPermissions, type AuthContext } from './context.js';
 
 const jwks = createRemoteJWKSet(new URL(config.HUB_JWKS_URL));
+const checkHubEntitlement = config.V79_ENTITLEMENT_RECHECK_ENABLED === '1'
+  ? createHubEntitlementChecker({
+      baseUrl: config.HUB_INTERNAL_URL,
+      secret: config.V79_POS_PLATFORM_SHARED_SECRET || config.V79_PLATFORM_SHARED_SECRET,
+    })
+  : null;
 const posSessionKey = createHmac('sha256', config.ENCRYPTION_KEY).update('v79-pos/session-signing/v1').digest();
 
 function bearer(request: FastifyRequest) {
@@ -92,6 +99,11 @@ export async function registerAuth(app: FastifyInstance) {
     });
 
     if (!membership?.active || !membership.tenant.active) throw unauthorized('No active membership for this tenant');
+    // The session JWT alone is not proof of a still-active Hub subscription.
+    // Recheck a signed Hub entitlement at least every 30 seconds; fail closed.
+    if (checkHubEntitlement && !(await checkHubEntitlement({
+      organizationId: tenantId, scopedUserId: identity.userId,
+    }))) throw unauthorized('Your V79 Hub subscription is inactive or cannot be verified');
 
     const permissions = new Set([
       ...builtInPermissions(membership.roleKey),
