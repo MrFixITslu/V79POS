@@ -84,7 +84,7 @@ app.post('/auth/launch', async (request, reply) => {
   const payload = JSON.stringify({ product: 'pos', ticket: body.ticket });
   const timestamp = String(Date.now());
   const digest = createHash('sha256').update(payload).digest('hex');
-  const signature = createHmac('sha256', config.V79_PLATFORM_SHARED_SECRET).update(`POST\n${pathname}\n${timestamp}\n${digest}`).digest('hex');
+  const signature = createHmac('sha256', config.V79_POS_PLATFORM_SHARED_SECRET || config.V79_PLATFORM_SHARED_SECRET).update(`POST\n${pathname}\n${timestamp}\n${digest}`).digest('hex');
   try {
     const response = await fetch(new URL(pathname, config.HUB_INTERNAL_URL), {
       method: 'POST',
