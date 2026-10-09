@@ -808,3 +808,61 @@ html,body{background:var(--v79-bg);color:#dce6f1}
 .login-points span{font-size:11px}
 .login-panel details,.footnote{font-size:11px}
 @media(max-width:600px){.btn.compact{font-size:11px;min-height:38px}.table{min-width:640px}.table-wrap{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}.search,.field input,.field select,.field textarea{font-size:16px;min-height:44px}}
+
+/* A stable initial frame prevents the Hub access panel from flashing while
+   restoring a saved session or exchanging a single-use Hub launch ticket. */
+.pos-connecting {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at 50% 30%, #142942 0, #081528 57%, #06111f 100%);
+  color: #eff8ff;
+  text-align: center;
+}
+.pos-connecting-card {
+  width: min(100%, 420px);
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+.pos-connecting-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 26px;
+  font-size: 18px;
+}
+.pos-connecting-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #4f8fe7, #f56d6d);
+  color: white;
+  font-weight: 900;
+}
+.pos-connecting-spinner {
+  width: 38px;
+  height: 38px;
+  border: 3px solid #334b64;
+  border-top-color: #5ad9bf;
+  border-radius: 50%;
+  animation: pos-connecting-spin 800ms linear infinite;
+}
+.pos-connecting h1 {
+  margin: 2px 0 0;
+  font-size: clamp(22px, 3vw, 28px);
+}
+.pos-connecting p {
+  margin: 0;
+  color: #b3c8dc;
+  font-size: 15px;
+}
+@keyframes pos-connecting-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pos-connecting-spinner { animation: none; }
+}
