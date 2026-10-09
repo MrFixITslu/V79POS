@@ -1,0 +1,12 @@
+# CI-only registry mirror. Never included in production deployments.
+services:
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:17-alpine
+  redis:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+  migrate:
+    pull_policy: never
+  api:
+    pull_policy: never
+  worker:
+    pull_policy: never
