@@ -31,7 +31,7 @@ export async function platformRoutes(app: FastifyInstance) {
     const body = request.method === 'GET' ? '' : JSON.stringify(request.body ?? {});
     if (request.headers['x-v79-service-id'] !== 'v79-hub' || !verifyPlatformSignature({
       method: request.method, pathname, timestamp: String(request.headers['x-v79-timestamp'] ?? ''),
-      signature: String(request.headers['x-v79-signature'] ?? ''), body, secret: config.V79_PLATFORM_SHARED_SECRET
+      signature: String(request.headers['x-v79-signature'] ?? ''), body, secret: config.V79_POS_PLATFORM_SHARED_SECRET || config.V79_PLATFORM_SHARED_SECRET
     })) return reply.code(401).send({ error: 'Invalid V79 platform signature.' });
   });
 
