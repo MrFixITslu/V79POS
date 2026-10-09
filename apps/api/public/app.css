@@ -866,3 +866,13 @@ html,body{background:var(--v79-bg);color:#dce6f1}
 @media (prefers-reduced-motion: reduce) {
   .pos-connecting-spinner { animation: none; }
 }
+
+
+/* Hub-initiated recovery never shows the direct-visitor sign-in panel. */
+.pos-connecting-card > a.btn {
+  margin-top: 12px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
