@@ -23,7 +23,8 @@ jobs:
       - run: pnpm build
       - run: pnpm test
       - run: pnpm lint
-      - run: docker build -t v79-commerce-ci .
+      - name: Build local image for isolated Compose CI
+        run: docker build --build-arg NODE_BASE=public.ecr.aws/docker/library/node:22-alpine -t v79pos:latest .
 
       - name: Validate production Compose stack
         run: |
@@ -47,17 +48,29 @@ jobs:
           PROXY_NETWORK=proxy_network
           EOF
           docker network inspect proxy_network >/dev/null 2>&1 || docker network create proxy_network
-          docker compose -f docker-compose.yml config >/dev/null
-          docker compose -f docker-compose.yml up -d --build
+          docker compose -f docker-compose.yml -f ci-compose.override.yml config >/dev/null
+          # ECR Public may also throttle simultaneous anonymous pulls.
+          # Fetch images sequentially with bounded backoff before Compose starts.
+          for image in public.ecr.aws/docker/library/postgres:17-alpine public.ecr.aws/docker/library/redis:7-alpine; do
+            for attempt in 1 2 3 4 5 6; do
+              if docker pull "$image"; then break; fi
+              if [ "$attempt" -eq 6 ]; then
+                echo "Unable to fetch CI database/cache image after six attempts: $image" >&2
+                exit 1
+              fi
+              sleep "$((attempt * 6))"
+            done
+          done
+          docker compose -f docker-compose.yml -f ci-compose.override.yml up -d --no-build --pull never
           for i in $(seq 1 45); do
-            if docker compose -f docker-compose.yml exec -T api wget -qO- http://127.0.0.1:8080/ready >/dev/null 2>&1; then
+            if docker compose -f docker-compose.yml -f ci-compose.override.yml exec -T api wget -qO- http://127.0.0.1:8080/ready >/dev/null 2>&1; then
               exit 0
             fi
             sleep 2
           done
-          docker compose -f docker-compose.yml ps
-          docker compose -f docker-compose.yml logs --no-color api migrate
+          docker compose -f docker-compose.yml -f ci-compose.override.yml ps
+          docker compose -f docker-compose.yml -f ci-compose.override.yml logs --no-color api migrate
           exit 1
       - name: Tear down production Compose stack
         if: always()
-        run: docker compose -f docker-compose.yml down -v --remove-orphans || true
+        run: docker compose -f docker-compose.yml -f ci-compose.override.yml down -v --remove-orphans || true
