@@ -305,6 +305,17 @@ function empty(text) {
 function table(headers, rows) {
   return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 }
+function renderConnecting(message) {
+  root.innerHTML = `<main id="main" class="pos-connecting" role="status" aria-live="polite" aria-busy="true">
+    <div class="pos-connecting-card">
+      <div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>
+      <div class="pos-connecting-spinner" aria-hidden="true"></div>
+      <h1>Connecting your workspace</h1>
+      <p>${h(message)}</p>
+    </div>
+  </main>`;
+}
+
 function renderLogin() {
   root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><span class="logo-orb">V</span><span>V79 Digital <b>POS</b></span></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details><summary>Integration testing</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
 }
@@ -1076,12 +1087,12 @@ async function connectCookie() {
 if (params.has('ticket')) {
   const ticket = params.get('ticket');
   history.replaceState(null, "", location.pathname + location.search);
-  renderLogin();
+  renderConnecting("Verifying your secure Hub launch…");
   fetch('/auth/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }), cache: 'no-store' })
     .then(async response => { if (!response.ok) throw Error((await response.json().catch(() => ({}))).error || 'Hub launch failed'); return connectCookie(); })
     .catch(error => { renderLogin(); toast(`${error.message} Open POS from Hub again.`, true); });
 } else {
-  renderLogin();
+  renderConnecting("Checking your Hub workspace session…");
   connectCookie().catch(() => renderLogin());
 }
 document.addEventListener("submit", async (event) => {
