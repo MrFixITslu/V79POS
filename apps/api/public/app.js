@@ -235,7 +235,7 @@ async function api(path, options = {}) {
     if (response.status === 401) {
       state.token = "";
       state.me = null;
-      renderLogin();
+      renderUnauthenticated();
     }
     throw Error(
       body.message || body.error || `Request failed (${response.status})`,
@@ -316,11 +316,39 @@ function renderConnecting(message) {
   </main>`;
 }
 
+const hubLaunchSessionKey = "v79-pos-hub-launched";
+
+// Presentation hint only; never used to grant access.
+function markHubLaunch() {
+  try { sessionStorage.setItem(hubLaunchSessionKey, "1"); } catch {}
+  try {
+    const previous = history.state && typeof history.state === "object" ? history.state : {};
+    history.replaceState({ ...previous, v79PosHubLaunched: true }, "");
+  } catch {}
+}
+function wasLaunchedFromHub() {
+  try { if (sessionStorage.getItem(hubLaunchSessionKey) === "1") return true; } catch {}
+  return history.state?.v79PosHubLaunched === true;
+}
+function renderHubReconnect() {
+  root.innerHTML = '<main id="main" class="pos-connecting" role="alert">' +
+    '<div class="pos-connecting-card">' +
+      '<div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>' +
+      '<h1>Reconnect through V79 Hub</h1>' +
+      '<p>We could not confirm your POS session. Return to your Hub workspace and launch POS again.</p>' +
+      '<a class="btn primary" href="https://hub.v79sl.com/">Return to V79 Hub</a>' +
+    '</div></main>';
+}
+function renderUnauthenticated() {
+  if (wasLaunchedFromHub() || window.opener) return renderHubReconnect();
+  return renderLogin();
+}
+
 function renderLogin() {
   root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><span class="logo-orb">V</span><span>V79 Digital <b>POS</b></span></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details><summary>Integration testing</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
 }
 function render() {
-  if (!state.me && !state.demo) return renderLogin();
+  if (!state.me && !state.demo) return renderUnauthenticated();
   const title = state.demo
     ? "Preview workspace"
     : state.me?.roleKey || "Workspace";
@@ -1046,7 +1074,7 @@ async function connect(token, tenant) {
   } catch (err) {
     state.token = "";
     state.me = null;
-    renderLogin();
+    renderUnauthenticated();
     toast(`Could not connect: ${err.message}`, true);
   }
 }
@@ -1061,6 +1089,8 @@ window.addEventListener("message", (event) => {
     typeof data.accessToken === "string" &&
     typeof data.tenantId === "string"
   ) {
+    markHubLaunch();
+    renderConnecting("Verifying your secure Hub session…");
     fetch('/auth/exchange', {
       method: 'POST',
       headers: { Authorization: `Bearer ${data.accessToken}` },
@@ -1070,7 +1100,7 @@ window.addEventListener("message", (event) => {
         if (!response.ok) throw Error((await response.json().catch(() => ({}))).error || 'Hub session exchange failed');
         return connectCookie();
       })
-      .catch(error => { renderLogin(); toast(error.message, true); });
+      .catch(() => { renderHubReconnect(); toast("Open POS from your Hub workspace again.", true); });
   }
 });
 if (window.opener)
@@ -1086,14 +1116,15 @@ async function connectCookie() {
 }
 if (params.has('ticket')) {
   const ticket = params.get('ticket');
-  history.replaceState(null, "", location.pathname + location.search);
+  markHubLaunch();
+  history.replaceState(history.state, "", location.pathname + location.search);
   renderConnecting("Verifying your secure Hub launch…");
   fetch('/auth/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }), cache: 'no-store' })
     .then(async response => { if (!response.ok) throw Error((await response.json().catch(() => ({}))).error || 'Hub launch failed'); return connectCookie(); })
-    .catch(error => { renderLogin(); toast(`${error.message} Open POS from Hub again.`, true); });
+    .catch(() => { renderHubReconnect(); toast("Open POS from your Hub workspace again.", true); });
 } else {
   renderConnecting("Checking your Hub workspace session…");
-  connectCookie().catch(() => renderLogin());
+  connectCookie().catch(() => renderUnauthenticated());
 }
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1628,7 +1659,7 @@ root.addEventListener("click", async (event) => {
       state.demo = false;
       state.cart = [];
       state.data = {};
-      renderLogin();
+      renderUnauthenticated();
       break;
     case "refresh":
       try {
