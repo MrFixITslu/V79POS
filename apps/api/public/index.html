@@ -15,7 +15,16 @@
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
-    <div id="app" aria-live="polite"></div>
+    <div id="app" aria-live="polite">
+      <main id="main" class="pos-connecting" role="status" aria-busy="true">
+        <div class="pos-connecting-card">
+          <div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>
+          <div class="pos-connecting-spinner" aria-hidden="true"></div>
+          <h1>Connecting your workspace</h1>
+          <p>Loading the secure POS experience…</p>
+        </div>
+      </main>
+    </div>
     <div id="toast" role="status" aria-live="polite"></div>
   </body>
 </html>
