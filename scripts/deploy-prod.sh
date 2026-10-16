@@ -24,6 +24,9 @@ if ! docker network inspect "$proxy_network" >/dev/null 2>&1; then
 fi
 
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null
+# Verify the effective rendered Compose configuration before image builds, DB
+# migration or any production service replacement. This prints no secrets.
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --format json | node scripts/pos-release-preflight.mjs
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d postgres redis
 
