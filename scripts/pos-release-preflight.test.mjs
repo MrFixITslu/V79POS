@@ -15,6 +15,7 @@ const make = () => ({
       V79_PLATFORM_SHARED_SECRET: 'synthetic-ci-only-secret-long-enough-2026',
     } },
     postgres: { networks: ['pos_internal'] },
+    redis: { networks: ['pos_internal'] },
   },
   networks: { pos_internal: { internal: true }, proxy_network: { external: true } },
 });
@@ -35,6 +36,16 @@ for (const [name, change] of [
   ['missing Hub JWKS', s => { delete s.services.api.environment.HUB_JWKS_URL; }],
   ['unprotected DB network', s => { s.services.postgres.networks.push('proxy_network'); }],
   ['missing internal DB', s => { s.networks.pos_internal.internal = false; }],
+  ['external JWKS origin', s => { s.services.api.environment.HUB_JWKS_URL = 'https://evil.example/.well-known/jwks.json'; }],
+  ['different JWKS port', s => { s.services.api.environment.HUB_JWKS_URL = 'http://v79-hub:3041/.well-known/jwks.json'; }],
+  ['different JWKS path', s => { s.services.api.environment.HUB_JWKS_URL = 'http://v79-hub:3040/fake'; }],
+  ['Hub URL credentials', s => { s.services.api.environment.HUB_INTERNAL_URL = 'http://user:pass@v79-hub:3040'; }],
+  ['wrong Hub host', s => { s.services.api.environment.HUB_INTERNAL_URL = 'http://public.example:3040'; }],
+  ['database published port', s => { s.services.postgres.ports = ['5432:5432']; }],
+  ['redis published port', s => { s.services.redis.ports = ['6379:6379']; }],
+  ['redis external network', s => { s.services.redis.networks.push('proxy_network'); }],
+  ['database host networking', s => { s.services.postgres.network_mode = 'host'; }],
+  ['privileged api', s => { s.services.api.privileged = true; }],
 ]) {
   const s = make(); change(s); check(s, false, name);
 }
