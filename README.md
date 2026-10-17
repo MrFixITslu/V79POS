@@ -58,6 +58,14 @@ GET /health
 GET /ready
 ```
 
+## P2 safety gate for POS rollout (draft)
+
+The `scripts/deploy-prod.sh` candidate now checks the **effective rendered Compose configuration before any Docker mutation**. It requires production Hub authentication, `V79_ENTITLEMENT_RECHECK_ENABLED=1`, a production POS origin, a usable Hub URL/JWKS and a sufficiently strong configured service secret. The database must remain only on an internal Docker network. It prints only generic denial codes, never secrets.
+
+The checked-in `.env.production.example` intentionally retains entitlement rechecks disabled until Hub signed entitlement endpoint compatibility is proven; therefore a direct production deploy with unchanged example settings is **blocked**. This is intentional, not an instruction to flip it without testing. Confirm the installed Hub supports `/api/platform/entitlement/check`, run a private two-tenant/expiry test, validate database backup and immutable rollback, then explicitly set the value and re-run the preflight.
+
+Run isolated syntax/config tests with `node scripts/pos-release-preflight.test.mjs`. This check does **not** prove device, payments, real network connectivity, independent security signoff, or actual live deployment.
+
 ## Production deployment
 
 Production uses the checked-in Prisma baseline migration, validated against a fresh PostgreSQL 17 database in CI. It does not use `db push`.

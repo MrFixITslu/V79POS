@@ -1,0 +1,27 @@
+name: P2 POS release preflight (no deployment)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/pos-release-preflight*.mjs'
+      - 'scripts/deploy-prod.sh'
+      - '.github/workflows/p2-pos-release-preflight.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  config-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Static script checks
+        run: |
+          sh -n scripts/deploy-prod.sh
+          node --check scripts/pos-release-preflight.mjs
+          node --check scripts/pos-release-preflight.test.mjs
+      - name: Reject unsafe merchant release configurations
+        run: node scripts/pos-release-preflight.test.mjs
