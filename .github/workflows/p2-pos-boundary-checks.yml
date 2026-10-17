@@ -1,0 +1,26 @@
+name: P2 POS security preflight boundaries (non-deploying)
+on:
+  pull_request:
+    branches:
+      - feature/p2-pos-release-preflight-20261016
+      - main
+    paths:
+      - scripts/pos-release-preflight.mjs
+      - scripts/pos-release-preflight.test.mjs
+      - .github/workflows/p2-pos-boundary-checks.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node --check scripts/pos-release-preflight.mjs
+      - run: node scripts/pos-release-preflight.test.mjs
