@@ -40,6 +40,7 @@ const state = {
   data: {},
   cart: [],
   reference: key(),
+  lastRegisterClose: null,
   selectedRegister: "",
   selectedSale: "",
   selectedReturnLine: "",
@@ -243,6 +244,35 @@ async function api(path, options = {}) {
   }
   return body;
 }
+function normalizeLoadedData(key, body) {
+  if (key === "dashboard") {
+    const report = body?.dashboard ?? body;
+    if (!report || typeof report !== "object" || Array.isArray(report))
+      throw Error("Dashboard response is invalid. Please refresh.");
+    return report;
+  }
+  const field = key === "stockCounts" ? "counts" : key;
+  const rows = Array.isArray(body) ? body : (body?.[field] ?? body?.[key]);
+  if (!Array.isArray(rows))
+    throw Error(`${key} response is invalid. Please refresh.`);
+  return rows;
+}
+function registerCloseReconciliation(register) {
+  const result = state.lastRegisterClose;
+  if (!register || register.sessions?.[0] || !result ||
+      result.status !== "CLOSED" || result.registerId !== register.id) return "";
+  const fields = ["expectedCash", "closingCash", "cashVariance"];
+  if (fields.some(key => result[key] === null || result[key] === undefined ||
+      String(result[key]).trim() === "" || !Number.isFinite(Number(result[key]))))
+    return '<div class="notice warn">Register closed. Reconciliation amounts are unavailable.</div>';
+  return `<section class="card section" aria-label="Register reconciliation">
+    <h2>Register reconciliation</h2>
+    <div class="row"><span>Expected cash</span><strong>${cash(result.expectedCash)}</strong></div>
+    <div class="row"><span>Counted cash</span><strong>${cash(result.closingCash)}</strong></div>
+    <div class="row"><span>Variance</span><strong>${cash(result.cashVariance)}</strong></div>
+    <p class="footnote">Variance is counted cash minus expected cash. These amounts are from the closed register session.</p>
+  </section>`;
+}
 async function load() {
   if (state.demo) {
     state.data = demoData();
@@ -267,13 +297,13 @@ async function load() {
   const results = await Promise.allSettled(
     requests.map(async ([key, path, permission]) => [
       key,
-      can(permission) ? await api(path) : {},
+      can(permission) ? normalizeLoadedData(key, await api(path)) : (key === "dashboard" ? {} : []),
     ]),
   );
   for (const result of results) {
     if (result.status === "fulfilled") {
       const [k, value] = result.value;
-      state.data[k] = value[k] ?? value;
+      state.data[k] = value;
     } else if (state.me) toast(result.reason.message, true);
   }
   if (
@@ -281,6 +311,21 @@ async function load() {
     !state.data.registers?.some((r) => r.id === state.selectedRegister)
   )
     state.selectedRegister = state.data.registers?.[0]?.id || "";
+  // Reopen an existing close receipt after refresh without creating a new sale
+  // or closing another register session. Server authorization still applies.
+  const register = currentRegister();
+  if (can("register.read") && register && !register.sessions?.[0] &&
+      state.lastRegisterClose?.registerId !== register.id) {
+    const sale = (state.data.sales || []).find(row =>
+      row.registerId === register.id && row.registerSessionId);
+    if (sale) {
+      try {
+        const receipt = await api(`/v1/register-sessions/${encodeURIComponent(sale.registerSessionId)}/reconciliation`);
+        if (receipt.session?.status === "CLOSED" && receipt.session.registerId === register.id)
+          state.lastRegisterClose = receipt.session;
+      } catch (error) { if (state.me) toast("Register reconciliation is unavailable. Please refresh.", true); }
+    }
+  }
 }
 function field(name, label, type = "text", value = "", extra = "") {
   return `<div class="field"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}></div>`;
@@ -440,6 +485,7 @@ function register() {
       : !open
         ? `<div class="notice warn">Register is closed. Open it before taking payments.</div>`
         : `<div class="notice">${h(r.name)} is open · sales are recorded at ${h(r.location?.name)}</div>`) +
+    registerCloseReconciliation(r) +
     `<div class="register-layout"><section class="card"><div class="row"><h2>Catalogue</h2><span class="muted">${matching.length} items</span></div><input class="search" id="product-search" type="search" placeholder="Search name, SKU or barcode" aria-label="Search products" value="${h(state.search)}"><div class="product-grid">${
       matching
         .map((v) => {
@@ -1065,6 +1111,7 @@ async function connect(token, tenant) {
   state.tenant = tenant.trim();
   state.demo = false;
   state.data = {};
+  state.lastRegisterClose = null;
   try {
     state.me = await api("/v1/me");
     state.tenant = state.me.tenantId;
@@ -1430,6 +1477,7 @@ document.addEventListener("submit", async (event) => {
             }),
           },
         );
+        state.lastRegisterClose = result;
         break;
       }
       case "checkout-form": {
@@ -1478,7 +1526,7 @@ document.addEventListener("submit", async (event) => {
     document.querySelector("#dialog")?.remove();
     await load();
     render();
-    if (form.id !== "checkout-form") toast("Saved successfully");
+    if (form.id !== "checkout-form") toast(form.id === "close-form" ? "Register closed" : "Saved successfully");
   } catch (err) {
     toast(err.message, true);
   } finally {
@@ -1659,6 +1707,7 @@ root.addEventListener("click", async (event) => {
       state.demo = false;
       state.cart = [];
       state.data = {};
+  state.lastRegisterClose = null;
       renderUnauthenticated();
       break;
     case "refresh":
