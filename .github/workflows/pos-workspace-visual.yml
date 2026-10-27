@@ -1,0 +1,36 @@
+name: POS workspace visual review
+on:
+  pull_request:
+    paths:
+      - 'apps/api/public/**'
+      - 'scripts/pos-workspace-visual-smoke.cjs'
+      - 'scripts/pos-workspace-review.test.mjs'
+      - '.github/workflows/pos-workspace-visual.yml'
+permissions:
+  contents: read
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check apps/api/public/app.js
+      - run: node --test scripts/pos-workspace-review.test.mjs scripts/pos-ui-stock-count-regression.test.mjs
+      - name: Install isolated browser tooling without changing project dependencies
+        run: |
+          npm install --prefix /tmp/pos-visual-tooling --no-save playwright@1.62.1 @sparticuz/chromium@153.0.0 --fetch-retries=1 --fetch-timeout=30000
+      - name: Render candidate with synthetic read-only data
+        env:
+          NODE_PATH: /tmp/pos-visual-tooling/node_modules
+          POS_VISUAL_OUTPUT: /tmp/v79-pos-visual
+          POS_PORTABLE_CHROMIUM: '1'
+        run: node scripts/pos-workspace-visual-smoke.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pos-workspace-synthetic-screenshots
+          path: /tmp/v79-pos-visual
+          if-no-files-found: warn
