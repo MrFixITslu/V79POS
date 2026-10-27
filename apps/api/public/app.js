@@ -1,3 +1,9 @@
+// Apply only an explicit saved preference; new visitors use the shared light theme.
+try {
+  const appearance = localStorage.getItem('v79-pos-theme');
+  if (appearance === 'dark' || appearance === 'light') document.documentElement.dataset.theme = appearance;
+} catch {}
+
 const root = document.querySelector("#app");
 const toastBox = document.querySelector("#toast");
 const h = (value) =>
@@ -50,6 +56,7 @@ const state = {
   search: "",
   demo: false,
   busy: false,
+  loadErrors: {},
 };
 let toastTimer;
 function toast(message, error = false) {
@@ -276,6 +283,7 @@ function registerCloseReconciliation(register) {
 async function load() {
   if (state.demo) {
     state.data = demoData();
+    state.loadErrors = {};
     state.selectedRegister = "reg1";
     return;
   }
@@ -300,11 +308,15 @@ async function load() {
       can(permission) ? normalizeLoadedData(key, await api(path)) : (key === "dashboard" ? {} : []),
     ]),
   );
-  for (const result of results) {
+  state.loadErrors = {};
+  for (const [index, result] of results.entries()) {
     if (result.status === "fulfilled") {
       const [k, value] = result.value;
       state.data[k] = value;
-    } else if (state.me) toast(result.reason.message, true);
+    } else {
+      state.loadErrors[requests[index][0]] = true;
+      if (state.me) toast(result.reason.message, true);
+    }
   }
   if (
     !state.selectedRegister ||
@@ -334,7 +346,7 @@ function select(name, label, options, blank = "Select…") {
   return `<div class="field"><label for="${h(name)}">${h(label)}</label><select id="${h(name)}" name="${h(name)}" ${name === "customerId" ? "" : "required"}><option value="">${h(blank)}</option>${options.map(([value, text]) => `<option value="${h(value)}">${h(text)}</option>`).join("")}</select></div>`;
 }
 function header(title, description, action = "") {
-  return `<div class="pagehead"><div><div class="eyebrow">V79 DIGITAL POS / ${h(state.page)}</div><h1>${h(title)}</h1><p>${h(description)}</p></div>${action}</div>`;
+  return `<div class="pagehead"><div><div class="eyebrow">VISION79 POS / ${h(tabs.find(([id]) => id === state.page)?.[1] || "Workspace")}</div><h1>${h(title)}</h1><p>${h(description)}</p></div>${action}</div>`;
 }
 function badge(text) {
   let kind = /STOCKED|RISK|FAILED|CANCELLED/.test(text)
@@ -348,12 +360,12 @@ function empty(text) {
   return `<div class="empty">${h(text)}</div>`;
 }
 function table(headers, rows) {
-  return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable records"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
 }
 function renderConnecting(message) {
   root.innerHTML = `<main id="main" class="pos-connecting" role="status" aria-live="polite" aria-busy="true">
     <div class="pos-connecting-card">
-      <div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>
+      <div class="pos-connecting-brand"><img class="pos-connecting-icon" src="/favicon.svg" alt="" width="42" height="42"><strong>Vision79 POS</strong></div>
       <div class="pos-connecting-spinner" aria-hidden="true"></div>
       <h1>Connecting your workspace</h1>
       <p>${h(message)}</p>
@@ -378,7 +390,7 @@ function wasLaunchedFromHub() {
 function renderHubReconnect() {
   root.innerHTML = '<main id="main" class="pos-connecting" role="alert">' +
     '<div class="pos-connecting-card">' +
-      '<div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>' +
+      '<div class="pos-connecting-brand"><img class="pos-connecting-icon" src="/favicon.svg" alt="" width="42" height="42"><strong>Vision79 POS</strong></div>' +
       '<h1>Reconnect through V79 Hub</h1>' +
       '<p>We could not confirm your POS session. Return to your Hub workspace and launch POS again.</p>' +
       '<a class="btn primary" href="https://hub.v79sl.com/">Return to V79 Hub</a>' +
@@ -390,48 +402,68 @@ function renderUnauthenticated() {
 }
 
 function renderLogin() {
-  root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><span class="logo-orb">V</span><span>V79 Digital <b>POS</b></span></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details><summary>Integration testing</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
+  root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><svg class="pos-wordmark" width="240" height="64" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" role="img" aria-label="Vision79 POS"><title>Vision79 POS</title><rect x="1" y="1" width="62" height="62" rx="16" fill="#10213a"/><rect x="14" y="12" width="36" height="26" rx="5" fill="#175bd5"/><path d="M21 20h18M21 27h12" stroke="white" stroke-width="3" stroke-linecap="round"/><path d="M23 38l-5 8h28l-5-8" fill="#74ddd0"/><rect x="12" y="45" width="40" height="9" rx="4" fill="#74ddd0"/><path d="M37 49h7" stroke="#10213a" stroke-width="2" stroke-linecap="round"/><text x="78" y="29" fill="#ffffff" font-family="Arial,sans-serif" font-size="24" font-weight="700">Vision79 <tspan fill="#74ddd0">POS</tspan></text><text x="79" y="48" fill="#c5d2e6" font-family="Arial,sans-serif" font-size="10" letter-spacing="2">COMMERCE WORKSPACE</text></svg></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details class="integration-tools"><summary>Authorised integration tools</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
+}
+// Navigation is a presentation convenience; API permissions remain authoritative.
+const pagePermissions = {
+  overview: "reports.read", register: "sales.create", products: "catalogue.read",
+  inventory: "inventory.read", "stock-control": "inventory.read", customers: "customers.read",
+  sales: "sales.read", orders: "orders.read", purchasing: "procurement.read", replenishment: "replenishment.read",
+};
+function visibleTabs() { return tabs.filter(([id]) => can(pagePermissions[id])); }
+function navButton([id, label, icon]) {
+  return `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
+}
+function loadNotice() {
+  const errors = Object.keys(state.loadErrors || {});
+  if (!errors.length) return "";
+  return `<div class="notice warn data-warning" role="status"><div><strong>Some workspace data could not be refreshed.</strong><br>Unavailable sections: ${errors.map(h).join(", ")}. Previously loaded rows may be out of date.</div><button class="btn" data-action="refresh">Retry loading</button></div>`;
+}
+function pageContent() {
+  const dependencies = {
+    register: ["products", "registers", "inventory"], products: ["products"],
+    inventory: ["inventory"], "stock-control": ["transfers", "stockCounts", "locations"],
+    customers: ["customers"], sales: ["sales"], orders: ["orders"],
+    purchasing: ["suppliers", "purchaseOrders"], replenishment: ["recommendations"],
+  };
+  if ((dependencies[state.page] || []).some(key => state.loadErrors?.[key])) {
+    const label = tabs.find(([id]) => id === state.page)?.[1] || "Workspace";
+    return header(label, "This section could not be refreshed.") +
+      '<section class="card section"><h2>Data unavailable</h2><p class="muted">Refresh this section before continuing. Previously loaded data may be out of date.</p><button class="btn primary" data-action="refresh">Retry this section</button></section>';
+  }
+  return pages[state.page]();
 }
 function render() {
   if (!state.me && !state.demo) return renderUnauthenticated();
-  const title = state.demo
-    ? "Preview workspace"
-    : state.me?.roleKey || "Workspace";
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">V</span><span>V79 POS<small>BY V79 DIGITAL</small></span></div><div class="nav-label">Commerce</div><nav class="nav" aria-label="Main navigation">${tabs.map(([id, label, icon]) => `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`).join("")}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo workspace" : "Workspace connected"}</strong><span class="connection"><i></i>${state.demo ? "Sample data · no changes saved" : `Hub role: ${h(title)}`}</span></div><a class="hub-link" href="https://hub.v79sl.com/">← Back to V79 Digital Hub</a><div class="sidebar-tagline">From Idea to Advantage.</div></aside><div class="work"><header class="topbar"><div><div class="top-eyebrow">Active workspace</div><strong>${state.demo ? "Demo business" : h(state.me?.roleKey || "Business workspace")}</strong><div class="meta">${state.demo ? "Preview only" : "V79 Digital Hub membership verified"}</div></div><div class="top-actions"><span class="statusline"><span class="dot"></span>${state.demo ? "Preview" : "Operational"}</span><button class="btn compact" data-action="refresh">Refresh</button><button class="btn compact" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main">${pages[state.page]()}</main></div></div>`;
+  const allowed = visibleTabs();
+  if (!allowed.some(([id]) => id === state.page)) state.page = allowed[0]?.[0] || "overview";
+  const label = tabs.find(([id]) => id === state.page)?.[1] || "Workspace";
+  document.title = `${label} | Vision79 POS`;
+  const title = state.demo ? "Sample business" : state.me?.roleKey || "Business workspace";
+  const nav = [["Sell & serve", ["overview", "register", "sales", "orders", "customers"]], ["Stock & supply", ["products", "inventory", "stock-control", "purchasing", "replenishment"]]]
+    .map(([group, ids]) => {
+      const rows = allowed.filter(([id]) => ids.includes(id));
+      return rows.length ? `<div class="nav-group"><div class="nav-label">${group}</div>${rows.map(navButton).join("")}</div>` : "";
+    }).join("");
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><img src="/favicon.svg" width="44" height="44" alt=""><span>Vision79 <b>POS</b><small>COMMERCE WORKSPACE</small></span></div><nav class="nav" aria-label="Main navigation">${nav}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo workspace" : "Hub workspace"}</strong><span>${state.demo ? "Sample data · no changes saved" : `Role: ${h(title)}`}</span></div><a class="hub-link" href="https://hub.v79sl.com/">← Back to Vision79 Hub</a><div class="sidebar-tagline">From Idea to Advantage.</div></aside><div class="work"><header class="topbar"><div><div class="top-eyebrow">Vision79 / Point of sale</div><strong>${h(label)}</strong><div class="meta">${state.demo ? "Demo · sample data" : h(title)}</div></div><div class="top-actions"><button class="btn compact" data-action="theme" aria-label="${document.documentElement.dataset.theme === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}">${document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode"}</button><button class="btn compact" data-action="refresh">Refresh</button><button class="btn compact" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main" tabindex="-1">${state.demo ? '<div class="notice demo-notice">Demo workspace · sample data · sales and changes are never saved.</div>' : ""}${loadNotice()}${pageContent()}</main><footer class="workspace-footer">Vision79 POS <span>Currency: XCD (EC$) · Powered by Vision79 Digital</span></footer></div></div>`;
 }
 const metric = (label, value, note, tone = "") =>
-  `<div class="card metric ${h(tone)}"><div class="metric-top"><div class="label">${h(label)}</div><span>LIVE</span></div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
+  `<div class="card metric ${h(tone)}"><div class="metric-top"><div class="label">${h(label)}</div></div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
+function reportValue(value, money = false) {
+  if (value === null || value === undefined || String(value).trim() === "" || !Number.isFinite(Number(value))) return "Unavailable";
+  return money ? cash(value) : h(value);
+}
 function overview() {
-  if (!can("reports.read"))
-    return (
-      header("Overview", "Your business at a glance") + needs("reports.read")
-    );
-  const d = state.data.dashboard || {},
-    s = d.sales || {},
-    i = d.inventory || {},
-    p = d.purchasing || {};
-  return (
-    header(
-      "Commerce overview",
-      "Live sales, margin, inventory and supply signals across this workspace",
-      `<div class="actions"><button class="btn primary" data-page="register">New sale →</button></div>`,
-    ) +
-    `<div class="grid metric-grid">${metric("Net revenue · 30 days", cash(s.netRevenue), "After refunds", "revenue")}${metric("Completed sales", s.orders || 0, "Last 30 days", "orders")}${metric("Average sale", cash(s.averageSale), "Per completed order", "average")}${metric("Gross profit", cash(s.grossProfit), "Before operating expenses", "profit")}${metric("Stock at risk", i.criticalReplenishmentItems || 0, "Reorder alerts", Number(i.criticalReplenishmentItems || 0) > 0 ? "risk" : "healthy")}</div><div class="ops-banner"><div><span class="ops-kicker">Inventory intelligence</span><strong>${Number(i.criticalReplenishmentItems || 0) > 0 ? `${h(i.criticalReplenishmentItems)} item(s) need replenishment attention` : "No critical replenishment signals"}</strong><small>Recommendations use demand, lead time and safety stock policy.</small></div><button class="btn" data-page="replenishment">Review signals →</button></div><div class="split"><section class="card section"><div class="row"><div><h2>Recent sales</h2><p class="section-note">Latest completed and recorded transactions</p></div><button class="btn compact" data-page="sales">View all</button></div>${
-      (state.data.sales || []).length
-        ? table(
-            ["Sale", "Customer", "Date", "Total"],
-            state.data.sales
-              .slice(0, 5)
-              .map(
-                (x) =>
-                  `<tr><td><strong>${h(x.number)}</strong></td><td>${h(x.customer?.name || "Walk-in")}</td><td>${h(date(x.createdAt))}</td><td><strong>${cash(x.total)}</strong></td></tr>`,
-              ),
-          )
-        : empty(
-            "No sales recorded yet. Open a register and create your first sale.",
-          )
-    }</section><section class="card section operations-card"><div><h2>Operations snapshot</h2><p class="section-note">Stock and inbound supply position</p></div><div class="ops-stat"><span>Inventory value</span><strong>${cash(i.value)}</strong></div><div class="ops-stat"><span>Open purchase orders</span><strong>${h(p.openPurchaseOrders || 0)}</strong></div><div class="ops-stat"><span>Delayed shipments</span><strong class="${Number(d.logistics?.delayedShipments || 0) > 0 ? "danger-text" : ""}">${h(d.logistics?.delayedShipments || 0)}</strong></div><hr class="divider"><button class="btn wide" data-page="purchasing">Open purchasing →</button></section></div>`
-  );
+  if (!can("reports.read")) return header("Overview", "Your business at a glance") + needs("reports.read");
+  const failed = state.loadErrors?.dashboard;
+  const d = failed ? {} : state.data.dashboard || {}, s = d.sales || {}, i = d.inventory || {}, p = d.purchasing || {};
+  const salesUnavailable = state.loadErrors?.sales || !Array.isArray(state.data.sales);
+  const action = can("sales.create") ? '<button class="btn primary" data-page="register">+ New sale</button>' : "";
+  return header("Your business, at a glance", "Sales, stock and supply in one connected workspace.", action) +
+    `<div class="grid metric-grid">${metric("Net revenue · 30 days", reportValue(s.netRevenue, true), "After refunds", "revenue")}${metric("Completed sales", reportValue(s.orders), "Last 30 days", "orders")}${metric("Average sale", reportValue(s.averageSale, true), "Per completed sale", "average")}${metric("Gross profit", reportValue(s.grossProfit, true), "Before operating expenses", "profit")}</div>
+    <div class="ops-banner"><div><span class="ops-kicker">Stock & supply</span><strong>${reportValue(i.criticalReplenishmentItems) === "Unavailable" ? "Stock signals unavailable" : Number(i.criticalReplenishmentItems) > 0 ? `${h(i.criticalReplenishmentItems)} item(s) need replenishment attention` : "No critical replenishment signals"}</strong><small>Based on demand, lead time and safety stock policy.</small></div>${can("replenishment.read") ? '<button class="btn" data-page="replenishment">Review stock signals →</button>' : ""}</div>
+    <div class="split"><section class="card section"><div class="row"><div><h2>Recent sales</h2><p class="section-note">Latest recorded transactions</p></div>${can("sales.read") ? '<button class="btn compact" data-page="sales">View all</button>' : ""}</div>${!can("sales.read") ? empty("Your role does not include sales history.") : salesUnavailable ? empty("Sales history is unavailable. Use Retry loading above.") : state.data.sales.length ? table(["Sale", "Customer", "Date", "Total"], state.data.sales.slice(0, 5).map(x => `<tr><td><strong>${h(x.number)}</strong></td><td>${h(x.customer?.name || "Walk-in")}</td><td>${h(date(x.createdAt))}</td><td><strong>${cash(x.total)}</strong></td></tr>`)) : empty("No sales recorded yet. Open a register to begin.")}</section>
+    <section class="card section operations-card"><h2>Operations snapshot</h2><p class="section-note">Stock and inbound supply</p><div class="ops-stat"><span>Inventory value</span><strong>${reportValue(i.value, true)}</strong></div><div class="ops-stat"><span>Open purchase orders</span><strong>${reportValue(p.openPurchaseOrders)}</strong></div><div class="ops-stat"><span>Delayed shipments</span><strong>${reportValue(d.logistics?.delayedShipments)}</strong></div>${can("procurement.read") ? '<button class="btn wide" data-page="purchasing">Open purchasing →</button>' : ""}</section></div>`;
 }
 function variants() {
   return (state.data.products || []).flatMap((p) =>
@@ -1111,6 +1143,7 @@ async function connect(token, tenant) {
   state.tenant = tenant.trim();
   state.demo = false;
   state.data = {};
+  state.loadErrors = {};
   state.lastRegisterClose = null;
   try {
     state.me = await api("/v1/me");
@@ -1562,6 +1595,7 @@ root.addEventListener("click", async (event) => {
   );
   if (!target) return;
   if (target.dataset.page) {
+    if (!Object.hasOwn(pagePermissions, target.dataset.page) || !can(pagePermissions[target.dataset.page])) return;
     state.page = target.dataset.page;
     state.search = "";
     render();
@@ -1694,6 +1728,14 @@ root.addEventListener("click", async (event) => {
     return;
   }
   switch (target.dataset.action) {
+    case "theme": {
+      const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem("v79-pos-theme", theme); } catch {}
+      render();
+      document.querySelector('[data-action="theme"]')?.focus();
+      break;
+    }
     case "demo":
       state.demo = true;
       state.me = { roleKey: "OWNER", permissions: ["*"] };
@@ -1707,7 +1749,8 @@ root.addEventListener("click", async (event) => {
       state.demo = false;
       state.cart = [];
       state.data = {};
-  state.lastRegisterClose = null;
+      state.loadErrors = {};
+      state.lastRegisterClose = null;
       renderUnauthenticated();
       break;
     case "refresh":
