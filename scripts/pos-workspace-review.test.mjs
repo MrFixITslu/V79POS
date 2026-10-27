@@ -89,3 +89,10 @@ test('failed register data hides checkout controls and failed lists never claim 
   assert.doesNotMatch(x.root.innerHTML,/data-action="checkout"|No stock counts yet|No customers yet/);
  }
 });
+
+test('record labels safely mirror headers and preserve existing cell content for mobile cards',async()=>{
+ const x=await setup();
+ const html=x.run(`table(["Customer", "Total"], ['<tr><td><strong>A &amp; B</strong></td><td>$10.00</td></tr>'])`);
+ assert.match(html,/data-label="Customer"/);assert.match(html,/data-label="Total"/);
+ assert.match(html,/<strong>A &amp; B<\/strong>/);assert.match(html,/\$10.00/);
+});

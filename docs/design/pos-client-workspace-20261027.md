@@ -41,3 +41,10 @@ The owner explicitly approved publishing the reviewed branch on 27 October 2026 
 5. Resolve outstanding production security/concurrency/device gates from RELEASE_READINESS.md against current evidence; no broad retest or restore rehearsal solely for this UI work.
 
 No production deployment, live payment, customer-data mutation, backup or rollback test performed for this candidate.
+
+## Publication and first browser acceptance — 27 October 2026
+- Public PR16 created with explicit owner approval. Initial head fae04e0: full CI40561329544, focused regression40561329486 and visual40561329451 all PASS. The source tree exactly matched the local checked candidate.
+- Local portable Chromium153 also completed all ten sections, 1440px/390px, light/dark: 42 screenshots, zero runtime errors/external requests, restricted navigation/data failure/appearance assertions PASS.
+- Screenshot review found mobile active-tab position resetting and key table values requiring sideways scrolling. Refined navigation to scroll only its horizontal region and added labelled mobile record cards. Extended assertions now verify active-tab visibility and no horizontal table overflow. Final local refinement: eight focused workspace checks PASS plus complete 42-screenshot smoke PASS. Merchant views/modals, auth bootstrap and transaction handlers remain untouched; shared table presentation changed.
+- Visual CI browser setup switched to the same pinned portable Chromium153 package after the first upstream installer took several minutes. Project dependencies remain unchanged. Latest-head CI is required after refinement; initial-head success is retained as historical evidence only.
+- No deployment or current production parity is claimed. The next runtime step is one read-only installed-image/config/source inventory, not another restore or transaction rehearsal.

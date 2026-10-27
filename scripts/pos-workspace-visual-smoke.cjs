@@ -24,7 +24,13 @@ const server = http.createServer((req,res)=>{
 (async()=>{
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const origin=`http://127.0.0.1:${server.address().port}`;
-  const browser=await chromium.launch({headless:true});
+  const launchOptions = {headless:true};
+  if (process.env.POS_PORTABLE_CHROMIUM === '1') {
+    const {default:portable} = await import(require.resolve('@sparticuz/chromium'));
+    launchOptions.executablePath = await portable.executablePath();
+    launchOptions.args = ['--no-sandbox','--no-zygote','--disable-gpu'];
+  }
+  const browser=await chromium.launch(launchOptions);
   const errors=[],unexpected=[];
   async function open({width=1440, theme='light', permissions=['*'], failed=[], malformed=false, anonymous=false}={}) {
     const context=await browser.newContext({viewport:{width,height:1000},reducedMotion:'reduce'});
@@ -56,6 +62,14 @@ const server = http.createServer((req,res)=>{
         for(const id of pages) {
           await page.locator(`.nav [data-page="${id}"]`).click();
           await page.locator('#main h1').waitFor();
+          if(width < 600) {
+            const visible=await page.locator('.nav [aria-current="page"]').evaluate(el=>{
+              const a=el.getBoundingClientRect(),b=el.closest('.nav').getBoundingClientRect();
+              return a.left >= b.left-1 && a.right <= b.right+1;
+            });
+            assert.equal(visible,true,`${id} selected mobile tab remains visible`);
+            assert.equal(await page.locator('.table-wrap').evaluateAll(nodes=>nodes.every(n=>n.scrollWidth<=n.clientWidth+1)),true,`${id} records need no horizontal scroll`);
+          }
           assert.match(await page.title(),/Vision79 POS/);
           const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1);
           assert.equal(overflow,false,`${id} ${width} ${theme} viewport overflow`);

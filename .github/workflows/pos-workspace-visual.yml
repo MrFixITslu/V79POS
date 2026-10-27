@@ -21,12 +21,12 @@ jobs:
       - run: node --test scripts/pos-workspace-review.test.mjs scripts/pos-ui-stock-count-regression.test.mjs
       - name: Install isolated browser tooling without changing project dependencies
         run: |
-          npm install --prefix /tmp/pos-visual-tooling --no-save playwright@1.62.1
-          /tmp/pos-visual-tooling/node_modules/.bin/playwright install --with-deps chromium
+          npm install --prefix /tmp/pos-visual-tooling --no-save playwright@1.62.1 @sparticuz/chromium@153.0.0 --fetch-retries=1 --fetch-timeout=30000
       - name: Render candidate with synthetic read-only data
         env:
           NODE_PATH: /tmp/pos-visual-tooling/node_modules
           POS_VISUAL_OUTPUT: /tmp/v79-pos-visual
+          POS_PORTABLE_CHROMIUM: '1'
         run: node scripts/pos-workspace-visual-smoke.cjs
       - uses: actions/upload-artifact@v4
         if: always()

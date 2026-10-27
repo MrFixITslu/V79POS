@@ -904,3 +904,11 @@ body,.work,.login{background:var(--canvas);color:var(--ink)}
 /* Keep wide records inside their scroll region, including narrow supply columns. */
 .card{min-width:0}
 .pos-wordmark{max-width:100%;height:auto}
+
+/* Labelled record cards keep totals and actions readable without sideways scrolling. */
+@media(max-width:600px){
+ .table-wrap{overflow:visible}.table{min-width:0;display:block}.table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+ .table tbody{display:grid;gap:12px}.table tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;padding:14px;background:var(--soft);border:1px solid var(--line);border-radius:12px}
+ .table td{display:block;padding:4px 0;border:0;min-width:0;overflow-wrap:anywhere}.table td::before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;margin-bottom:5px}
+ .table td:last-child{grid-column:1/-1}.table td .actions{flex-wrap:wrap}.table td .btn{min-height:44px}.table td small{margin-top:3px}
+}

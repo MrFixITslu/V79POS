@@ -360,7 +360,11 @@ function empty(text) {
   return `<div class="empty">${h(text)}</div>`;
 }
 function table(headers, rows) {
-  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Scrollable records"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const labelledRows = rows.map(row => {
+    let column = 0;
+    return row.replace(/<td(?=[\s>])/g, () => `<td data-label="${h(headers[column++] || "Details")}"`);
+  });
+  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Records"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${labelledRows.join("")}</tbody></table></div>`;
 }
 function renderConnecting(message) {
   root.innerHTML = `<main id="main" class="pos-connecting" role="status" aria-live="polite" aria-busy="true">
@@ -446,6 +450,17 @@ function render() {
       return rows.length ? `<div class="nav-group"><div class="nav-label">${group}</div>${rows.map(navButton).join("")}</div>` : "";
     }).join("");
   root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><img src="/favicon.svg" width="44" height="44" alt=""><span>Vision79 <b>POS</b><small>COMMERCE WORKSPACE</small></span></div><nav class="nav" aria-label="Main navigation">${nav}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo workspace" : "Hub workspace"}</strong><span>${state.demo ? "Sample data · no changes saved" : `Role: ${h(title)}`}</span></div><a class="hub-link" href="https://hub.v79sl.com/">← Back to Vision79 Hub</a><div class="sidebar-tagline">From Idea to Advantage.</div></aside><div class="work"><header class="topbar"><div><div class="top-eyebrow">Vision79 / Point of sale</div><strong>${h(label)}</strong><div class="meta">${state.demo ? "Demo · sample data" : h(title)}</div></div><div class="top-actions"><button class="btn compact" data-action="theme" aria-label="${document.documentElement.dataset.theme === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}">${document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode"}</button><button class="btn compact" data-action="refresh">Refresh</button><button class="btn compact" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main" tabindex="-1">${state.demo ? '<div class="notice demo-notice">Demo workspace · sample data · sales and changes are never saved.</div>' : ""}${loadNotice()}${pageContent()}</main><footer class="workspace-footer">Vision79 POS <span>Currency: XCD (EC$) · Powered by Vision79 Digital</span></footer></div></div>`;
+  // Keep the current section visible in the horizontal mobile navigation.
+  // Scroll only the navigation region; never move the checkout/document viewport.
+  const navigation = document.querySelector(".nav");
+  if (navigation?.scrollWidth > navigation?.clientWidth) {
+    const active = navigation.querySelector('[aria-current="page"]');
+    if (active) {
+      const item = active.getBoundingClientRect(), region = navigation.getBoundingClientRect();
+      if (item.left < region.left) navigation.scrollLeft -= region.left - item.left;
+      else if (item.right > region.right) navigation.scrollLeft += item.right - region.right;
+    }
+  }
 }
 const metric = (label, value, note, tone = "") =>
   `<div class="card metric ${h(tone)}"><div class="metric-top"><div class="label">${h(label)}</div></div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
