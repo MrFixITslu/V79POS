@@ -35,6 +35,14 @@ export async function teamRoutes(app: FastifyInstance) {
 
   app.post('/v1/team', { preHandler: requirePermission('team.write') }, async request => {
     const body = membershipSchema.parse(request.body);
+    // Existing tenants may predate the new built-in technician role.
+    if (body.roleKey === 'TECHNICIAN' && ['OWNER', 'ADMIN', 'MANAGER'].includes(request.auth.roleKey)) {
+      await prisma.tenantRole.upsert({
+        where: { tenantId_key: { tenantId: request.auth.tenantId, key: 'TECHNICIAN' } },
+        create: { tenantId: request.auth.tenantId, key: 'TECHNICIAN', name: 'Technician', builtIn: true },
+        update: {}
+      });
+    }
     const role = await prisma.tenantRole.findUnique({ where: { tenantId_key: { tenantId: request.auth.tenantId, key: body.roleKey } } });
     if (!role) throw notFound('Role not found');
     if (body.userId === request.auth.userId && request.auth.roleKey !== 'OWNER') throw conflict('You cannot change your own POS role or location access');
