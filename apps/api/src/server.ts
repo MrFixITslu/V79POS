@@ -59,12 +59,39 @@ for (const [route, filename, mime] of [
   ['/technician', 'technician.html', 'text/html; charset=utf-8'],
   ['/technician.js', 'technician.js', 'text/javascript; charset=utf-8'],
   ['/technician.css', 'technician.css', 'text/css; charset=utf-8'],
+  ['/brand-site.webmanifest', 'brand-site.webmanifest', 'application/manifest+json'],
+  ['/pos-icon.svg', 'pos-icon.svg', 'image/svg+xml'],
+  ['/pos-logo.svg', 'pos-logo.svg', 'image/svg+xml'],
   ['/favicon.svg', 'favicon.svg', 'image/svg+xml']
 ] as const) {
   app.get(route, async (_request, reply) => {
     reply.header('content-type', mime);
     reply.header('cache-control', 'no-store');
     return readFile(join(publicRoot, filename));
+  });
+}
+
+const brandAssets = [
+  'android-chrome-192.png',
+  'android-chrome-512.png',
+  'apple-touch-icon.png',
+  'favicon-16.png',
+  'favicon-32.png',
+  'favicon-48.png',
+  'favicon.ico',
+  'header-dark.png',
+  'header-light.png',
+  'icon-256.png',
+  'icon-64.png',
+  'icon-transparent-256.png',
+  'icon-transparent-512.png',
+  'logo-full.png',
+] as const;
+for (const name of brandAssets) {
+  app.get('/brand/' + name, async (_request, reply) => {
+    reply.header('content-type', name.endsWith('.ico') ? 'image/x-icon' : 'image/png');
+    reply.header('cache-control', 'public, max-age=3600');
+    return readFile(join(publicRoot, 'brand', name));
   });
 }
 
