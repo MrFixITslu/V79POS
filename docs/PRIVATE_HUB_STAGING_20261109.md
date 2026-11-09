@@ -23,6 +23,18 @@ Risks to prevent: staging accidentally connecting to the live POS DB, exposing c
 - Stage image build was started using low-priority `ionice -c3 nice -n 10 docker build --progress=plain -t v79pos:hubqa-2590623 .` in the *isolated checkout*, logging to `/home/firelion/v79-pos-hubqa-20261109/build.log`. **Its final result was not observed**.
 - Production POS was still `localhost/v79-brand-pos:20261106-r1`, **healthy**, on the last verified check.
 
+## Owner-confirmed Hub entitlement results (9 November 2026)
+
+The owner executed a staging-container check against the **running production Hub signed entitlement service**, without exporting tokens or printing credentials. The results were:
+
+- `HUB_SIGNING_KEYS=PASS`: staging can retrieve the Hub JWKS.
+- `UNKNOWN_MEMBER_DENIED=PASS`: signed query for nonexistent tenant/user returned denied.
+- `MEMBERSHIPS_CHECKED=2`: two active staging memberships checked, drawn from the restored POS database.
+- `ACTIVE_ENTITLEMENTS_FOUND=1`: one of the two restored membership identifiers was accepted by Hub for POS.
+- `POS_ENTITLEMENT_GATE=PASS`: positive and negative signed-check contract verified.
+
+**This is not a browser SSO result.** The production Hub's `/api/apps/pos/launch` creates a single-use launch ticket **after calling `provisionPosWorkspace` / `provisionPosTeamMember` on the live POS endpoint** and redirects the browser to the configured production URL `https://pos.v79sl.com`. Do not redirect a real Hub launch into staging casually: that would potentially change production provisioning and consume a one-time ticket. Stage sign-in should use a separately approved controlled launch mechanism, preserving MFA, permissions and HTTPS secure-cookie semantics, with no token pasted into chat.
+
 ## Owner-confirmed private staging API checks (9 November 2026)
 
 The owner started only the `api` service in the named private Compose stack and reported the following outputs:
