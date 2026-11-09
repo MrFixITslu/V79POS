@@ -40,7 +40,7 @@ export async function teamRoutes(app: FastifyInstance) {
     if (body.userId === request.auth.userId && request.auth.roleKey !== 'OWNER') throw conflict('You cannot change your own POS role or location access');
     if (['OWNER', 'ADMIN'].includes(body.roleKey) && request.auth.roleKey !== 'OWNER') throw conflict('Only an owner can assign owner or admin roles');
     if (!request.auth.allLocations && body.locationIds.some(locationId => !request.auth.locationIds.has(locationId))) throw conflict('You cannot assign access outside your own locations');
-    if (request.auth.roleKey === 'MANAGER' && !['MANAGER','SUPERVISOR','CASHIER','INVENTORY','PURCHASING','DELIVERY'].includes(body.roleKey)) throw conflict('Managers cannot assign finance, audit, admin or owner roles');
+    if (request.auth.roleKey === 'MANAGER' && !['MANAGER','SUPERVISOR','CASHIER','INVENTORY','PURCHASING','DELIVERY','TECHNICIAN'].includes(body.roleKey)) throw conflict('Managers cannot assign finance, audit, admin or owner roles');
     const locations = await prisma.location.findMany({ where: { tenantId: request.auth.tenantId, id: { in: body.locationIds }, active: true }, select: { id: true } });
     if (locations.length !== new Set(body.locationIds).size) throw notFound('One or more locations were not found');
 
