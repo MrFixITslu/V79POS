@@ -349,6 +349,7 @@ function renderLogin() {
 }
 function render() {
   if (!state.me && !state.demo) return renderUnauthenticated();
+  if (!state.demo && state.me?.roleKey === 'TECHNICIAN') { window.location.replace('/technician'); return; }
   const title = state.demo
     ? "Preview workspace"
     : state.me?.roleKey || "Workspace";
