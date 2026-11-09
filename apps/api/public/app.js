@@ -46,6 +46,9 @@ const state = {
   selectedCommerceOrder: "",
   selectedStockCount: "",
   selectedStockCountLine: "",
+  selectedTransfer: "",
+  transferSerials: [],
+  transferLots: [],
   search: "",
   demo: false,
   busy: false,
@@ -504,9 +507,16 @@ function stockControl() {
   const transfers = (state.data.transfers || []).map((x) => {
     const actions = [];
     if (can("inventory.transfer") && x.status === "REQUESTED") actions.push(`<button class="btn compact" data-transfer-action="approve" data-transfer="${h(x.id)}">Approve</button>`);
-    if (can("inventory.transfer") && x.status === "APPROVED") actions.push(`<button class="btn compact" data-transfer-action="dispatch" data-transfer="${h(x.id)}">Dispatch</button>`);
+    if (can("inventory.transfer") && x.status === "APPROVED") {
+      const controlled = x.purpose === "TECHNICIAN_ISSUE" && x.lines?.some(l =>
+        l.productVariant?.product?.productType === "SERIALIZED" ||
+        l.productVariant?.product?.productType === "LOT_TRACKED" ||
+        l.productVariant?.requiresExpiry);
+      if (controlled) actions.push(`<button class="btn compact" data-transfer-allocate="${h(x.id)}">Allocate serials/lots</button>`);
+      actions.push(`<button class="btn compact" data-transfer-action="dispatch" data-transfer="${h(x.id)}">Dispatch</button>`);
+    }
     if (can("inventory.transfer") && x.status === "IN_TRANSIT") actions.push(`<button class="btn compact primary" data-transfer-action="receive" data-transfer="${h(x.id)}">Receive</button>`);
-    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.fromLocation?.name)} → ${h(x.toLocation?.name)}</td><td>${h(x.lines?.length || 0)} line(s)</td><td>${badge(x.status)}</td><td><div class="actions">${actions.join("")}</div></td></tr>`;
+    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.fromLocation?.name)} → ${h(x.toLocation?.name)}<small>${h((x.purpose || "GENERAL").replaceAll("_", " "))}${x.jobReference ? " · Job " + h(x.jobReference) : ""}</small></td><td>${h(x.lines?.map(l => l.productVariant?.sku + " × " + l.quantity).join(", ") || "—")}</td><td>${badge(x.status)}</td><td><div class="actions">${actions.join("")}</div></td></tr>`;
   });
   const counts = (state.data.stockCounts || []).map((x) => {
     const actions = [];
@@ -654,6 +664,29 @@ function modal(title, contents, id, button = "Save") {
   dialog.querySelector("input,select")?.focus();
 }
 function openModal(name) {
+  if (name === "allocate-transfer") {
+    const transfer = (state.data.transfers || []).find(x => x.id === state.selectedTransfer);
+    const line = transfer?.lines?.[0];
+    if (!line) return toast("Transfer line is no longer available", true);
+    const product = line.productVariant;
+    const required = Number(line.quantity);
+    const isSerial = product?.product?.productType === "SERIALIZED";
+    const serialInputs = isSerial
+      ? state.transferSerials.slice(0, 200).map(x =>
+          `<label class="stock-choice"><input type="checkbox" class="issue-serial" value="${h(x.id)}"> ${h(x.serialNumber)}</label>`).join("")
+      : "";
+    const lotInputs = !isSerial
+      ? state.transferLots.slice(0, 100).map(x =>
+          `<div class="field"><label for="lot-${h(x.id)}">${h(x.lotNumber)} · ${h(x.quantityOnHand)} available</label><input id="lot-${h(x.id)}" class="issue-lot" data-lot="${h(x.id)}" type="number" min="0" max="${h(x.quantityOnHand)}" step="0.0001" value="0"></div>`).join("")
+      : "";
+    modal("Allocate controlled technician issue",
+      `<div class="field wide notice">Transfer ${h(transfer.number)} · ${h(product?.sku)} · exact quantity <strong>${h(required)}</strong>. Select the original warehouse stock units before dispatch.</div>` +
+      (isSerial
+        ? `<div class="field wide"><strong>Available serial numbers</strong><div class="stock-choice-list">${serialInputs || "No available serials were found at this warehouse."}</div></div>`
+        : `<div class="field wide"><strong>Available lots</strong><div class="form-grid">${lotInputs || "No available lots were found at this warehouse."}</div></div>`),
+      "allocation-form", "Save allocation");
+    return;
+  }
   const locations = (state.data.locations || []).map((location) => [location.id, location.name]);
   if (name === "stock-count")
     modal(
@@ -1167,6 +1200,26 @@ document.addEventListener("submit", async (event) => {
         state.selectedStockCountLine = "";
         break;
       }
+      case "allocation-form": {
+        const transfer = (state.data.transfers || []).find(t => t.id === state.selectedTransfer);
+        if (!transfer || transfer.status !== "APPROVED" || transfer.purpose !== "TECHNICIAN_ISSUE") {
+          throw Error("Only an approved technician stock issue can be allocated here.");
+        }
+        const serialNumberIds = [...document.querySelectorAll(".issue-serial:checked")].map(x => x.value);
+        const lotAllocations = [...document.querySelectorAll(".issue-lot")].map(x =>
+          ({ lotId: x.dataset.lot, quantity: Number(x.value) })).filter(x => x.quantity > 0);
+        const required = Number(transfer.lines?.[0]?.quantity);
+        const isSerial = transfer.lines?.[0]?.productVariant?.product?.productType === "SERIALIZED";
+        if (isSerial && serialNumberIds.length !== required) throw Error("Select exactly " + required + " serial numbers.");
+        if (!isSerial && Math.abs(lotAllocations.reduce((a, x) => a + x.quantity, 0) - required) > 0.0001) {
+          throw Error("Select lot quantities totalling exactly " + required + ".");
+        }
+        result = await api(`/v1/transfers/${encodeURIComponent(transfer.id)}/allocate`, {
+          method: "POST", body: JSON.stringify({ serialNumberIds, lotAllocations })
+        });
+        state.selectedTransfer = "";
+        break;
+      }
       case "stock-transfer-form": {
         const fromLocationId = String(v.get("fromLocationId"));
         const toLocationId = String(v.get("toLocationId"));
@@ -1511,7 +1564,7 @@ root.addEventListener("change", (event) => {
 });
 root.addEventListener("click", async (event) => {
   const target = event.target.closest(
-    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action],[data-transfer-action],[data-count-action]",
+    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action],[data-transfer-action],[data-transfer-allocate],[data-count-action]",
   );
   if (!target) return;
   if (target.dataset.page) {
@@ -1544,6 +1597,28 @@ root.addEventListener("click", async (event) => {
     } catch (err) {
       toast(err.message, true);
     }
+    return;
+  }
+  if (target.dataset.transferAllocate) {
+    if (state.demo) return toast("Demo mode is read-only.", true);
+    const transfer = (state.data.transfers || []).find(x => x.id === target.dataset.transferAllocate);
+    const line = transfer?.lines?.[0];
+    if (!line) return toast("Transfer not found.", true);
+    const locationId = encodeURIComponent(transfer.fromLocationId);
+    const id = encodeURIComponent(line.productVariantId);
+    try {
+      state.selectedTransfer = transfer.id;
+      if (line.productVariant?.product?.productType === "SERIALIZED") {
+        const result = await api(`/v1/inventory/serials?locationId=${locationId}&productVariantId=${id}&status=AVAILABLE`);
+        state.transferSerials = result.serials || [];
+        state.transferLots = [];
+      } else {
+        const result = await api(`/v1/inventory/lots?locationId=${locationId}`);
+        state.transferLots = (result.lots || []).filter(l => l.productVariantId === line.productVariantId);
+        state.transferSerials = [];
+      }
+      openModal("allocate-transfer");
+    } catch (err) { toast(err.message, true); }
     return;
   }
   if (target.dataset.transferAction) {
