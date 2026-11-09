@@ -14,6 +14,7 @@ import { issuePosSession, registerAuth, verifyHubAccessToken } from './modules/a
 import { catalogueRoutes } from './modules/catalogue/routes.js';
 import { inventoryRoutes } from './modules/inventory/routes.js';
 import { transferRoutes } from './modules/inventory/transfers.js';
+import { technicianRoutes } from './modules/technician/routes.js';
 import { salesRoutes } from './modules/sales/routes.js';
 import { procurementRoutes } from './modules/procurement/routes.js';
 import { replenishmentRoutes } from './modules/replenishment/routes.js';
@@ -53,6 +54,9 @@ for (const [route, filename, mime] of [
   ['/', 'index.html', 'text/html; charset=utf-8'],
   ['/app.css', 'app.css', 'text/css; charset=utf-8'],
   ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
+  ['/technician', 'technician.html', 'text/html; charset=utf-8'],
+  ['/technician.js', 'technician.js', 'text/javascript; charset=utf-8'],
+  ['/technician.css', 'technician.css', 'text/css; charset=utf-8'],
   ['/favicon.svg', 'favicon.svg', 'image/svg+xml']
 ] as const) {
   app.get(route, async (_request, reply) => {
@@ -143,6 +147,7 @@ await auditRoutes(app);
 await inventoryRoutes(app);
 await stockCountRoutes(app);
 await transferRoutes(app);
+await technicianRoutes(app);
 await registerRoutes(app);
 await salesRoutes(app);
 await orderRoutes(app);
