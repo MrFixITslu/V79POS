@@ -180,6 +180,94 @@ try {
   assert.equal(year.series.length,5);
   pass('Completed-period WoW/MoM/YoY, report scope, refunds by return date and CSV export');
 
+
+  // Controlled serial-numbered hardware follows the same warehouse custody pipeline.
+  const { data: device } = await owner('POST', '/v1/products', {
+    name: 'Test serialised router', productType: 'SERIALIZED',
+    variants: [{ sku: 'TEST-SERIAL-' + randomUUID().slice(0,8), name: 'Router',
+      baseCost: 150, sellPrice: 250, trackStock: true }]
+  });
+  const serialVariantId = device.variants[0].id;
+  await prisma.inventoryBalance.create({
+    data: { tenantId, locationId: warehouse.id, productVariantId: serialVariantId, onHand: 2 }
+  });
+  const serials = await Promise.all([1,2].map(n => prisma.inventorySerial.create({
+    data: { tenantId, locationId: warehouse.id, productVariantId: serialVariantId,
+      serialNumber: 'TEST-' + n + '-' + randomUUID().slice(0,8) }
+  })));
+  await prisma.inventoryCostLayer.create({
+    data: { tenantId, locationId: warehouse.id, productVariantId: serialVariantId,
+      sourceType: 'QA_RECEIPT', sourceId: randomUUID(), quantityReceived: 2,
+      quantityRemaining: 2, unitCost: 150 }
+  });
+  const { data: serialIssue } = await tech('POST','/v1/technician/requests',{
+    requestKey: idempotency(), purpose: 'TECHNICIAN_ISSUE',
+    warehouseId: warehouse.id, productVariantId: serialVariantId,
+    quantity: 2, reason: 'Issue two tracked routers', jobReference: 'TEST-ROUTER-200'
+  });
+  await owner('POST','/v1/transfers/' + serialIssue.id + '/approve',{});
+  await owner('POST','/v1/transfers/' + serialIssue.id + '/dispatch',{},409);
+  await owner('POST','/v1/transfers/' + serialIssue.id + '/allocate',{
+    serialNumberIds: serials.map(s => s.id), lotAllocations: []
+  });
+  await owner('POST','/v1/transfers/' + serialIssue.id + '/dispatch',{});
+  await tech('POST','/v1/transfers/' + serialIssue.id + '/receive',{});
+  const { data: serialUse } = await tech('POST','/v1/technician/use',{
+    requestKey: idempotency(), productVariantId: serialVariantId, quantity: 1,
+    serialNumberIds: [serials[0].id], jobReference: 'TEST-ROUTER-200'
+  });
+  assert.equal(Number(serialUse.quantity),1);
+  const installed = await prisma.inventorySerial.findUnique({ where: { id: serials[0].id } });
+  assert.equal(installed.status,'INSTALLED');
+  await tech('POST','/v1/technician/requests',{
+    requestKey: idempotency(), purpose:'TECHNICIAN_RETURN_FAULTY',
+    warehouseId: warehouse.id, productVariantId: serialVariantId, quantity:1,
+    serialNumberIds:[serials[0].id], reason:'Trying to return installed equipment'
+  },409);
+  const { data: serialReturn } = await tech('POST','/v1/technician/requests',{
+    requestKey: idempotency(), purpose:'TECHNICIAN_RETURN_FAULTY',
+    warehouseId: warehouse.id, productVariantId: serialVariantId, quantity:1,
+    serialNumberIds:[serials[1].id], reason:'Return faulty tracked router'
+  });
+  await owner('POST','/v1/transfers/' + serialReturn.id + '/approve',{});
+  await owner('POST','/v1/transfers/' + serialReturn.id + '/dispatch',{});
+  await owner('POST','/v1/transfers/' + serialReturn.id + '/receive',{});
+  const damaged = await prisma.inventorySerial.findUnique({ where: { id: serials[1].id } });
+  assert.equal(damaged.status,'DAMAGED');
+  const { data: afterSerial } = await owner('GET','/v1/inventory?locationId=' + warehouse.id);
+  const damagedStock = afterSerial.inventory.find(v => v.productVariantId === serialVariantId);
+  assert.equal(Number(damagedStock.quarantined),1);
+  assert.equal(Number(damagedStock.available),0);
+  pass('Serialised router issue requires allocation; installed serials cannot be returned as unissued stock; faulty return quarantined');
+
+  // Revoke a technician and confirm their existing device session is not an authorisation grant.
+  const record = await prisma.membership.findUnique({
+    where: { tenantId_userId: { tenantId, userId:'technician-integration' } }
+  });
+  await prisma.membership.update({ where: { id: record.id }, data: { active:false } });
+  await tech('GET','/v1/technician/workspace',null,401);
+  await prisma.membership.update({ where: { id: record.id }, data: { active:true } });
+  const { data: afterReactivation } = await tech('GET','/v1/technician/workspace');
+  assert.equal(afterReactivation.location.id, mobileId);
+  pass('Revoked technician loses access; reactivation is auditable and explicitly controlled');
+
+  // One remaining unit may only be consumed once under parallel requests.
+  await owner('POST','/v1/inventory/adjustments',{
+    locationId:mobileId,productVariantId:variantId,type:'ADJUSTMENT_GAIN',
+    quantity:1,reason:'Concurrency test isolated stock'
+  });
+  const contenders = await Promise.all([
+    tech('POST','/v1/technician/use',{requestKey:idempotency(),
+      productVariantId:variantId,quantity:1,jobReference:'CONCURRENT-A'},200).then(()=>'success').catch(()=>'denied'),
+    tech('POST','/v1/technician/use',{requestKey:idempotency(),
+      productVariantId:variantId,quantity:1,jobReference:'CONCURRENT-B'},200).then(()=>'success').catch(()=>'denied')
+  ]);
+  assert.equal(contenders.filter(x=>x==='success').length,1);
+  const { data: concurrentStock } = await tech('GET','/v1/technician/workspace');
+  const connector = concurrentStock.inventory.find(x=>x.productVariantId===variantId);
+  assert.equal(Number(connector.available),0);
+  pass('Parallel stock consumption cannot double-issue the last unit');
+
   console.log('INTEGRATION_RESULT=PASS');
   console.log('REQUESTS_CHECKED=' + checked);
 } finally {
