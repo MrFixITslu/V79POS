@@ -134,6 +134,12 @@ try {
   }, 404);
   await call(ownerId, 'GET', '/v1/reports/trends', null, 401, foreignId);
   pass('Cross-tenant location, warehouse, API and report denial');
+  await owner('POST','/v1/team',{userId:'scoped-manager',roleKey:'MANAGER',locationIds:[warehouse.id]});
+  await call('scoped-manager','GET','/v1/reports/trends?locationId=' + mobileId,null,403);
+  await call('scoped-manager','GET','/v1/inventory?locationId=' + mobileId,null,403);
+  const { data: managerReport } = await call('scoped-manager','GET','/v1/reports/trends?locationId=' + warehouse.id);
+  assert.equal(managerReport.scope,'selected location');
+  pass('Restricted managers cannot inspect technician custody outside their assigned warehouse');
 
   // Completed-period reporting deliberately excludes the ongoing week.
   // Backdate *test-only* completed movements to validate aggregation.
