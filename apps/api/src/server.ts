@@ -55,6 +55,7 @@ for (const [route, filename, mime] of [
   ['/', 'index.html', 'text/html; charset=utf-8'],
   ['/app.css', 'app.css', 'text/css; charset=utf-8'],
   ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
+  ['/reports-ui.js', 'reports-ui.js', 'text/javascript; charset=utf-8'],
   ['/technician', 'technician.html', 'text/html; charset=utf-8'],
   ['/technician.js', 'technician.js', 'text/javascript; charset=utf-8'],
   ['/technician.css', 'technician.css', 'text/css; charset=utf-8'],
