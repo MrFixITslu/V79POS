@@ -37,7 +37,7 @@ const builtIn: Record<string, string[]> = {
   PURCHASING: ['catalogue.read','inventory.read','procurement.read','procurement.write','replenishment.read','replenishment.run','replenishment.manage','logistics.read','logistics.write','reports.read','shifts.use'],
   FINANCE: ['sales.read','orders.read','procurement.read','reports.read','audit.read'],
   DELIVERY: ['fulfillment.read','fulfillment.dispatch','shifts.use'],
-  TECHNICIAN: ['catalogue.read','inventory.read','inventory.technician','shifts.use'],
+  TECHNICIAN: ['inventory.technician','shifts.use'],
   AUDITOR: ['sales.read','orders.read','inventory.read','procurement.read','reports.read','audit.read']
 };
 
