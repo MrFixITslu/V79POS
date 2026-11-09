@@ -74,18 +74,32 @@ export async function platformRoutes(app: FastifyInstance) {
       });
       if (!mainLocation?.active) return null;
 
+      const previous = await tx.membership.findUnique({
+        where: { tenantId_userId: { tenantId: organizationId, userId: user.id } }
+      });
+      // A routine Hub "staff" sync must not replace a specifically assigned
+      // technician role or restore general MAIN stock visibility.
+      // Hub role changes to manager/viewer and deprovision events still take effect.
+      const keepTechnician = role === 'staff' && previous?.active && previous.roleKey === 'TECHNICIAN';
+      const effectiveRoleKey = keepTechnician ? 'TECHNICIAN' : roleKey;
       const membership = await tx.membership.upsert({
         where: { tenantId_userId: { tenantId: organizationId, userId: user.id } },
-        create: { tenantId: organizationId, userId: user.id, roleKey },
-        update: { roleKey, active: true }
+        create: { tenantId: organizationId, userId: user.id, roleKey: effectiveRoleKey },
+        update: { roleKey: effectiveRoleKey, active: true }
       });
 
-      await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
-      await tx.userLocationAccess.create({
-        data: { membershipId: membership.id, locationId: mainLocation.id }
-      });
+      if (!keepTechnician) {
+        await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
+        await tx.userLocationAccess.create({
+          data: { membershipId: membership.id, locationId: mainLocation.id }
+        });
+      }
 
-      return { membershipId: membership.id, locationId: mainLocation.id };
+      const assigned = keepTechnician ? await tx.userLocationAccess.findMany({
+        where: { membershipId: membership.id, location: { active: true, type: 'MOBILE', custodianUserId: user.id } },
+        select: { locationId: true }
+      }) : [{ locationId: mainLocation.id }];
+      return { membershipId: membership.id, locationIds: assigned.map(x => x.locationId), roleKey: effectiveRoleKey };
     });
 
     if (!provisioned) {
@@ -96,8 +110,8 @@ export async function platformRoutes(app: FastifyInstance) {
       provisioned: true,
       organizationId,
       userId: user.id,
-      roleKey,
-      locationIds: [provisioned.locationId]
+      roleKey: provisioned.roleKey,
+      locationIds: provisioned.locationIds
     };
   });
 
