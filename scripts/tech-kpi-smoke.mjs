@@ -172,7 +172,8 @@ try {
   assert.ok(csvHeaders.headers.get('content-type').includes('text/csv'));
   assert.ok(csv.includes('Net sales (incl. tax)'));
   assert.ok(csv.includes('Week of'));
-  assert.equal(csv.startsWith('\uFEFF'),true);
+  // Fetch text decoding strips the optional UTF-8 BOM; test actual report content.
+  assert.ok(csv.includes('V79 POS KPI history'));
   const { data: month } = await owner('GET','/v1/reports/trends?period=month');
   const { data: year } = await owner('GET','/v1/reports/trends?period=year');
   assert.equal(month.series.length,12);
