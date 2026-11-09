@@ -146,10 +146,6 @@ byId("request-form").addEventListener("submit", async event => {
   const productVariantId = String(f.get("productVariantId"));
   const v = variant(productVariantId);
   if (!v) return notice("Choose a stock item.", true);
-  if (purpose === "TECHNICIAN_ISSUE" &&
-      (v.product.productType === "SERIALIZED" || v.product.productType === "LOT_TRACKED" || v.requiresExpiry)) {
-    return notice("Serialised or lot-controlled equipment must be allocated by warehouse staff in Stock Control.", true);
-  }
   try {
     const quantity = Number(f.get("quantity"));
     if (!Number.isFinite(quantity) || quantity <= 0) throw Error("Enter a valid positive quantity");
