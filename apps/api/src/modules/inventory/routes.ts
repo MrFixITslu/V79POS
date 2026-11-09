@@ -9,11 +9,14 @@ import { assertLocationAccess, requirePermission } from '../auth/context.js';
 import { availableFromBalance, postInventoryMovement } from './service.js';
 import { conflict, notFound, forbidden } from '../../lib/errors.js';
 
+const stockQty = z.coerce.number().finite().min(0.0001).max(1000000000)
+  .refine(value => Number(value.toFixed(4)) === value, 'Use at most four decimal places');
+
 const adjustmentSchema = z.object({
   locationId: z.string().min(1),
   productVariantId: z.string().min(1),
   type: z.enum(['ADJUSTMENT_GAIN', 'ADJUSTMENT_LOSS', 'DAMAGE', 'EXPIRY', 'QUARANTINE_IN', 'QUARANTINE_RELEASE']),
-  quantity: z.coerce.number().positive(),
+  quantity: stockQty,
   reason: z.string().min(3).max(500)
 });
 
