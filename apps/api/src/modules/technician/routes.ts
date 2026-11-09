@@ -11,21 +11,23 @@ import { consumeFifoCost } from '../inventory/costing.js';
 import { writeAudit } from '../../lib/audit.js';
 import { emitEvent } from '../../lib/outbox.js';
 
-const allocation = z.object({ lotId: z.string().min(1), quantity: z.number().positive().finite() });
+const stockQuantity = z.number().finite().min(0.0001).max(1000000000)
+  .refine(value => Number(value.toFixed(4)) === value, 'Use at most four decimal places');
+const allocation = z.object({ lotId: z.string().min(1), quantity: stockQuantity });
 const item = z.object({
   productVariantId: z.string().min(1),
-  quantity: z.number().positive().finite(),
+  quantity: stockQuantity,
   serialNumberIds: z.array(z.string().min(1)).max(100).default([]),
   lotAllocations: z.array(allocation).max(100).default([])
 });
-const requestSchema = item.extend({
+export const technicianRequestSchema = item.extend({
   purpose: z.enum(['TECHNICIAN_ISSUE', 'TECHNICIAN_RETURN_GOOD', 'TECHNICIAN_RETURN_FAULTY']),
   warehouseId: z.string().min(1),
   requestKey: z.string().uuid(),
   jobReference: z.string().trim().max(120).optional(),
   reason: z.string().trim().min(3).max(500)
 });
-const useSchema = item.extend({
+export const technicianUseSchema = item.extend({
   requestKey: z.string().uuid(),
   jobReference: z.string().trim().min(2).max(120)
 });
@@ -108,16 +110,19 @@ export async function technicianRoutes(app: FastifyInstance) {
     const [inventory, warehouses, products, transfers, usage, serials, lots] = await Promise.all([
       prisma.inventoryBalance.findMany({
         where: { tenantId, locationId: mobile.id },
-        include: { productVariant: { include: { product: true } } }, orderBy: { updatedAt: 'desc' }
+        include: { productVariant: { select: { id: true, sku: true, name: true, requiresExpiry: true,
+          product: { select: { name: true, productType: true } } } } }, orderBy: { updatedAt: 'desc' }
       }),
       prisma.location.findMany({ where: { tenantId, active: true, type: { in: ['WAREHOUSE', 'STORE'] } },
         select: { id: true, name: true, code: true }, orderBy: { name: 'asc' } }),
       prisma.productVariant.findMany({ where: { tenantId, active: true, trackStock: true, product: { active: true } },
-        include: { product: true }, orderBy: { sku: 'asc' }, take: 500 }),
+        select: { id: true, sku: true, name: true, requiresExpiry: true,
+          product: { select: { name: true, productType: true } } }, orderBy: { sku: 'asc' }, take: 500 }),
       prisma.stockTransfer.findMany({ where: { tenantId, technicianUserId: request.auth.userId },
         include: { lines: { include: { productVariant: true } }, fromLocation: { select: { name: true } }, toLocation: { select: { name: true } } },
         orderBy: { createdAt: 'desc' }, take: 100 }),
       prisma.technicianUsage.findMany({ where: { tenantId, technicianUserId: request.auth.userId },
+        select: { id: true, productVariantId: true, quantity: true, jobReference: true, createdAt: true },
         orderBy: { createdAt: 'desc' }, take: 100 }),
       prisma.inventorySerial.findMany({ where: { tenantId, locationId: mobile.id, status: 'AVAILABLE' },
         select: { id: true, productVariantId: true, serialNumber: true }, take: 500 }),
@@ -131,13 +136,23 @@ export async function technicianRoutes(app: FastifyInstance) {
   });
 
   app.post('/v1/technician/requests', { preHandler: requirePermission('inventory.technician') }, async request => {
-    const body = requestSchema.parse(request.body);
+    const body = technicianRequestSchema.parse(request.body);
     const tenantId = request.auth.tenantId;
     return serializable(async tx => {
       const mobile = await custody(tx, request);
-      const existing = await tx.stockTransfer.findFirst({ where: { tenantId, requestKey: body.requestKey } });
+      const existing = await tx.stockTransfer.findFirst({
+        where: { tenantId, requestKey: body.requestKey }, include: { lines: true }
+      });
       if (existing) {
-        if (existing.technicianUserId !== request.auth.userId) throw conflict('Request key is already used');
+        const sameWarehouse = body.purpose === 'TECHNICIAN_ISSUE'
+          ? existing.fromLocationId === body.warehouseId : existing.toLocationId === body.warehouseId;
+        if (existing.technicianUserId !== request.auth.userId || existing.purpose !== body.purpose ||
+            existing.jobReference !== (body.jobReference ?? null) || !sameWarehouse ||
+            existing.notes !== body.reason || existing.lines.length !== 1 ||
+            existing.lines[0].productVariantId !== body.productVariantId ||
+            !existing.lines[0].quantity.equals(body.quantity)) {
+          throw conflict('Request key was reused with different details');
+        }
         return existing;
       }
       const warehouse = await tx.location.findFirst({
@@ -181,7 +196,7 @@ export async function technicianRoutes(app: FastifyInstance) {
   });
 
   app.post('/v1/technician/use', { preHandler: requirePermission('inventory.technician') }, async request => {
-    const body = useSchema.parse(request.body);
+    const body = technicianUseSchema.parse(request.body);
     const tenantId = request.auth.tenantId;
     return serializable(async tx => {
       const mobile = await custody(tx, request);
@@ -189,8 +204,12 @@ export async function technicianRoutes(app: FastifyInstance) {
         where: { tenantId_requestKey: { tenantId, requestKey: body.requestKey } }
       });
       if (existing) {
-        if (existing.technicianUserId !== request.auth.userId) throw conflict('Request key already belongs to another user');
-        return existing;
+        if (existing.technicianUserId !== request.auth.userId ||
+            existing.productVariantId !== body.productVariantId ||
+            !existing.quantity.equals(body.quantity) || existing.jobReference !== body.jobReference) {
+          throw conflict('Request key was reused with different details');
+        }
+        return { id: existing.id, quantity: existing.quantity, jobReference: existing.jobReference, createdAt: existing.createdAt };
       }
       const variant = await checkAllocations(tx, body, tenantId, mobile.id);
       // Guard serial/lot state even when the same technician submits two parallel requests.
@@ -228,7 +247,7 @@ export async function technicianRoutes(app: FastifyInstance) {
       await emitEvent(tx, { tenantId, eventType: 'technician.stock_used',
         aggregateType: 'TechnicianUsage', aggregateId: usageId,
         payload: { jobReference: body.jobReference, productVariantId: variant.id, quantity: body.quantity } });
-      return usage;
+      return { id: usage.id, quantity: usage.quantity, jobReference: usage.jobReference, createdAt: usage.createdAt };
     });
   });
 }
