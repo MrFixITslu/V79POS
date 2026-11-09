@@ -257,6 +257,7 @@ async function load() {
     ["registers", "/v1/registers", "register.read"],
     ["inventory", "/v1/inventory", "inventory.read"],
     ["locations", "/v1/locations", "inventory.read"],
+    ["team", "/v1/team", "team.read"],
     ["transfers", "/v1/transfers", "inventory.read"],
     ["stockCounts", "/v1/stock-counts", "inventory.read"],
     ["customers", "/v1/customers?limit=200", "customers.read"],
@@ -528,7 +529,7 @@ function stockControl() {
     header(
       "Stock control",
       "Cycle counts, stock corrections and location transfers",
-      `<div class="actions">${can("inventory.count") ? '<button class="btn" data-modal="stock-count">+ Cycle count</button>' : ""}${can("inventory.transfer") ? '<button class="btn primary" data-modal="stock-transfer">+ Transfer stock</button>' : ""}</div>`,
+      `<div class="actions">${["OWNER","ADMIN"].includes(state.me?.roleKey) ? '<button class="btn" data-modal="warehouse">+ Warehouse</button><button class="btn" data-modal="technician-access">Assign technician</button>' : ""}${can("inventory.count") ? '<button class="btn" data-modal="stock-count">+ Cycle count</button>' : ""}${can("inventory.transfer") ? '<button class="btn primary" data-modal="stock-transfer">+ Transfer stock</button>' : ""}</div>`,
     ) +
     `<div class="split"><section class="card section"><div class="row"><div><h2>Stock transfers</h2><p class="section-note">Move sellable stock between assigned locations</p></div></div>${transfers.length ? table(["Transfer","Route","Items","Status","Actions"],transfers) : empty("No stock transfers yet.")}</section><section class="card section"><div><h2>Cycle counts</h2><p class="section-note">Count selected products and post approved variances</p></div>${counts.length ? table(["Count","Location","Type","Status","Actions"],counts) : empty("No stock counts yet.")}</section></div>`
   );
@@ -664,6 +665,24 @@ function modal(title, contents, id, button = "Save") {
   dialog.querySelector("input,select")?.focus();
 }
 function openModal(name) {
+  if (name === "warehouse") {
+    modal("Add inventory location", field("name", "Warehouse or store name", "text", "", 'required minlength="2" maxlength="120"') +
+      field("code", "Short location code", "text", "", 'required minlength="2" maxlength="24" pattern="[a-zA-Z0-9_-]+"') +
+      select("type", "Location type", [["WAREHOUSE","Warehouse"],["STORE","Store"],["OFFICE","Office"]]) +
+      field("address", "Address (optional)", "text", "", 'maxlength="300"'),
+      "warehouse-form", "Create location");
+    return;
+  }
+  if (name === "technician-access") {
+    const members = (state.data.team?.members || []).filter(m => m.active && !["OWNER","ADMIN"].includes(m.roleKey));
+    modal("Assign technician stock custody",
+      `<div class="field wide notice">This changes the selected member's POS role to Technician. They will lose cashier and warehouse permissions. A dedicated mobile stock location will be created, and their Hub login/MFA stays in place.</div>` +
+      select("userId", "Existing Hub team member", members.map(m =>
+        [m.userId, (m.profile?.displayName || m.userId) + " · " + m.roleKey])) +
+      field("displayName", "Technician display name", "text", "", 'required minlength="2" maxlength="100"'),
+      "technician-access-form", "Assign technician");
+    return;
+  }
   if (name === "allocate-transfer") {
     const transfer = (state.data.transfers || []).find(x => x.id === state.selectedTransfer);
     const line = transfer?.lines?.[0];
@@ -1175,6 +1194,25 @@ document.addEventListener("submit", async (event) => {
   try {
     let result;
     switch (form.id) {
+      case "warehouse-form":
+        result = await api("/v1/locations", {
+          method: "POST",
+          body: JSON.stringify({ name: String(v.get("name")).trim(), code: String(v.get("code")).trim(),
+            type: v.get("type"), address: String(v.get("address") || "").trim() || undefined })
+        });
+        break;
+      case "technician-access-form": {
+        const userId = String(v.get("userId"));
+        const member = (state.data.team?.members || []).find(m => m.userId === userId);
+        if (!member || !member.active || ["OWNER","ADMIN"].includes(member.roleKey)) throw Error("Select an eligible Hub team member.");
+        if (member.roleKey !== "TECHNICIAN") {
+          await api("/v1/team", { method: "POST", body: JSON.stringify({
+            userId, roleKey: "TECHNICIAN", locationIds: [] }) });
+        }
+        result = await api("/v1/technician/assign", { method: "POST",
+          body: JSON.stringify({ userId, displayName: String(v.get("displayName")).trim() }) });
+        break;
+      }
       case "stock-count-form":
         result = await api("/v1/stock-counts", {
           method: "POST",
