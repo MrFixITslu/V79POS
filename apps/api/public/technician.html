@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a1726">
+  <meta name="description" content="V79 POS technician stock custody, installation usage and stock returns.">
+  <title>Technician Stock · V79 POS</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/technician.css">
+  <script defer src="/technician.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="top">
+    <div class="brand"><div class="mark" aria-hidden="true">V</div><div><strong>V79 POS</strong><small>TECHNICIAN STOCK</small></div></div>
+    <div class="top-actions"><button type="button" id="refresh" class="small">Refresh</button><button type="button" id="signout" class="small">Sign out</button></div>
+  </header>
+  <main id="main" class="wrap">
+    <div id="message" role="status" aria-live="polite"></div>
+    <section class="intro">
+      <div class="kicker">YOUR MOBILE STOCK</div>
+      <h1>Everything in your care, in one place.</h1>
+      <p>Request equipment, record work completed and return unused or faulty hardware. Every movement is tracked against your account.</p>
+      <div id="location" class="muted">Connecting to your Hub account…</div>
+    </section>
+    <div id="loading" role="status">Loading live stock information…</div>
+    <div id="workspace" hidden>
+      <section class="stats" aria-label="Stock summary">
+        <div class="stat"><span>Items held</span><strong id="stat-items">0</strong></div>
+        <div class="stat"><span>Available units</span><strong id="stat-units">0</strong></div>
+        <div class="stat"><span>Pending movements</span><strong id="stat-pending">0</strong></div>
+      </section>
+      <div class="layout">
+        <div class="main-col">
+          <section class="panel">
+            <div class="section-head"><div><h2>My assigned stock</h2><p>Live quantities in your technician location</p></div></div>
+            <div id="stock" class="stock-list"></div>
+          </section>
+          <section class="panel">
+            <div class="section-head"><div><h2>Movement history</h2><p>Requests and their progress through the warehouse</p></div></div>
+            <div id="movements" class="history-list"></div>
+          </section>
+          <section class="panel">
+            <div class="section-head"><div><h2>Equipment used on jobs</h2><p>Consumption recorded against a job reference</p></div></div>
+            <div id="usage" class="history-list"></div>
+          </section>
+        </div>
+        <div class="action-col">
+          <section class="panel action-panel">
+            <div class="section-head"><div><h2>Request or return stock</h2><p>Warehouse confirmation required</p></div></div>
+            <form id="request-form">
+              <label for="purpose">Movement type</label>
+              <select id="purpose" name="purpose" required>
+                <option value="TECHNICIAN_ISSUE">Check out equipment</option>
+                <option value="TECHNICIAN_RETURN_GOOD">Return good equipment</option>
+                <option value="TECHNICIAN_RETURN_FAULTY">Return faulty equipment</option>
+              </select>
+              <label for="warehouse">Warehouse / store</label>
+              <select id="warehouse" name="warehouseId" required></select>
+              <label for="request-product">Stock item</label>
+              <select id="request-product" name="productVariantId" required></select>
+              <label for="request-quantity">Quantity</label>
+              <input id="request-quantity" type="number" name="quantity" min="0.0001" step="any" required placeholder="1">
+              <label for="request-job">Job or Tiquet reference (optional)</label>
+              <input id="request-job" name="jobReference" maxlength="120" placeholder="e.g. TQ-1052">
+              <label for="reason">Reason / condition</label>
+              <textarea id="reason" name="reason" minlength="3" maxlength="500" required rows="2" placeholder="What is the stock for, or why is it being returned?"></textarea>
+              <div class="controlled">
+                <label for="request-serials">Serial numbers (for returns)</label>
+                <textarea id="request-serials" rows="2" placeholder="One serial number per line"></textarea>
+                <label for="request-lots">Lots (for returns)</label>
+                <textarea id="request-lots" rows="2" placeholder="LOT123:2, LOT124:1"></textarea>
+                <small>For serialised or lot-controlled issues, the warehouse allocates the exact items in Stock Control.</small>
+              </div>
+              <button type="submit" class="primary">Submit stock request</button>
+            </form>
+          </section>
+          <section class="panel action-panel">
+            <div class="section-head"><div><h2>Record equipment used</h2><p>Deduct stock from your custody for a completed job</p></div></div>
+            <form id="use-form">
+              <label for="use-product">Item held</label>
+              <select id="use-product" name="productVariantId" required></select>
+              <label for="use-quantity">Quantity used</label>
+              <input id="use-quantity" type="number" name="quantity" min="0.0001" step="any" required placeholder="1">
+              <label for="use-job">Job / Tiquet reference</label>
+              <input id="use-job" name="jobReference" minlength="2" maxlength="120" required placeholder="e.g. TQ-1052">
+              <div class="controlled">
+                <label for="use-serials">Serial numbers used</label>
+                <textarea id="use-serials" rows="2" placeholder="One serial number per line"></textarea>
+                <label for="use-lots">Lots used</label>
+                <textarea id="use-lots" rows="2" placeholder="LOT123:2"></textarea>
+              </div>
+              <button type="submit" class="primary">Record stock used</button>
+            </form>
+          </section>
+        </div>
+      </div>
+    </div>
+    <div id="signin" class="panel" hidden>
+      <h2>Open your V79 Hub workspace</h2>
+      <p>Your POS session is unavailable or your technician stock location has not been assigned.</p>
+      <a class="primary link" href="https://hub.v79sl.com/">Return to V79 Hub</a>
+    </div>
+  </main>
+  <footer>V79 Digital · Accountable stock, from warehouse to job</footer>
+</body>
+</html>
