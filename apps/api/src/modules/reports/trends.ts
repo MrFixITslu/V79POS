@@ -205,7 +205,8 @@ export function trendsCsv(report: Awaited<ReturnType<typeof buildTrends>>): stri
 }
 
 export async function trendRoutes(app: FastifyInstance) {
-  app.get('/v1/reports/trends', { preHandler: requirePermission('reports.read') }, async request => {
+  app.get('/v1/reports/trends', { preHandler: requirePermission('reports.read') }, async (request, reply) => {
+    reply.header('cache-control', 'private, no-store');
     const query = reportQuery.parse(request.query);
     return buildTrends(request, query.period, query.locationId);
   });
