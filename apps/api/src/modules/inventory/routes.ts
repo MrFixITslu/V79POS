@@ -7,6 +7,7 @@ import { writeAudit } from '../../lib/audit.js';
 import { emitEvent } from '../../lib/outbox.js';
 import { assertLocationAccess, requirePermission } from '../auth/context.js';
 import { availableFromBalance, postInventoryMovement } from './service.js';
+import { conflict, notFound } from '../../lib/errors.js';
 
 const adjustmentSchema = z.object({
   locationId: z.string().min(1),
@@ -57,6 +58,15 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const body = adjustmentSchema.parse(request.body);
     assertLocationAccess(request, body.locationId);
     return serializable(async tx => {
+      const variant = await tx.productVariant.findFirst({
+        where: { tenantId: request.auth.tenantId, id: body.productVariantId },
+        select: { requiresExpiry: true, product: { select: { productType: true } } }
+      });
+      if (!variant) throw notFound('Product was not found');
+      if (variant.product.productType === 'SERIALIZED' ||
+          variant.product.productType === 'LOT_TRACKED' || variant.requiresExpiry) {
+        throw conflict('Tracked hardware requires a serial/lot-aware stock adjustment. Use controlled receiving or transfers.');
+      }
       const movement = await postInventoryMovement(tx, {
         tenantId: request.auth.tenantId, locationId: body.locationId, productVariantId: body.productVariantId,
         movementType: InventoryMovementType[body.type], quantity: body.quantity, referenceType: 'MANUAL_ADJUSTMENT',
