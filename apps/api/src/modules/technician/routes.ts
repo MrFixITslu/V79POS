@@ -136,7 +136,8 @@ export async function technicianRoutes(app: FastifyInstance) {
             !existing.lines[0].quantity.equals(body.quantity)) {
           throw conflict('Request key was reused with different details');
         }
-        return existing;
+        return { id: existing.id, number: existing.number, status: existing.status,
+          purpose: existing.purpose, createdAt: existing.createdAt };
       }
       const warehouse = await tx.location.findFirst({
         where: { id: body.warehouseId, tenantId, active: true, type: { in: ['WAREHOUSE', 'STORE'] } }
@@ -150,11 +151,8 @@ export async function technicianRoutes(app: FastifyInstance) {
         include: { product: true }
       });
       if (!variant) throw notFound('Item was not found');
-      // Warehouse operators must allocate controlled items at issue time.
-      if (isIssue && (variant.product.productType === 'SERIALIZED' ||
-          variant.product.productType === 'LOT_TRACKED' || variant.requiresExpiry)) {
-        throw conflict('Warehouse must issue serialized or lot-tracked hardware using Stock Control');
-      }
+      // Technicians request quantity only. Warehouse staff allocate exact serials/lots
+      // to the pending issue before dispatch, using the warehouse-controlled API.
       if (!isIssue) await checkAllocations(tx, body, tenantId, mobile.id);
       else if (body.serialNumberIds.length || body.lotAllocations.length) throw conflict('Do not allocate stock from an unassigned warehouse');
       const transfer = await tx.stockTransfer.create({
@@ -174,7 +172,8 @@ export async function technicianRoutes(app: FastifyInstance) {
       await writeAudit(tx, { tenantId, actorUserId: request.auth.userId,
         action: 'technician.stock_requested', resourceType: 'StockTransfer', resourceId: transfer.id,
         after: { purpose: body.purpose, jobReference: body.jobReference, quantity: body.quantity } });
-      return transfer;
+      return { id: transfer.id, number: transfer.number, status: transfer.status,
+        purpose: transfer.purpose, createdAt: transfer.createdAt };
     });
   });
 
