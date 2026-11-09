@@ -110,10 +110,11 @@ try {
   await authoriseAs('technician-integration');
   await navigate('/technician');
   await ready('!document.querySelector("#workspace").hidden', 'mobile technician workspace');
-  const mobile = await evaluate('({width:document.documentElement.scrollWidth, viewport:innerWidth, stock:document.querySelectorAll(".stock-item").length, form:!!document.querySelector("#request-form")})');
+  const mobile = await evaluate('({width:document.documentElement.scrollWidth, viewport:innerWidth, stock:document.querySelectorAll(".stock-item").length, stockEmpty:document.querySelector("#stock").innerText.includes("No assigned stock"), history:document.querySelectorAll(".history-item").length, form:!!document.querySelector("#request-form")})');
   assert.ok(mobile.form);
   assert.ok(mobile.width <= mobile.viewport + 3, 'Mobile page must not overflow horizontally');
-  assert.ok(mobile.stock >= 1);
+  assert.ok(mobile.stock >= 1 || mobile.stockEmpty, 'Zero remaining stock must be shown clearly');
+  assert.ok(mobile.history >= 1, 'Movement and job use history must be available');
   const screenshot = await command('Page.captureScreenshot', { format: 'png', fromSurface: true });
   const filepath = '/tmp/v79pos-technician-mobile-qa.png';
   writeFileSync(filepath, Buffer.from(screenshot.data, 'base64'));
