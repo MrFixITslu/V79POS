@@ -41,8 +41,16 @@
 
 ## Version and release safeguards
 
-**Critical branding/version difference:** The running production image has a customised POS UI, dark/light preference, favicon, 14 brand image assets and manifest that were absent from the current draft PR. A three-way merge was prepared in a **persistent Acer staging checkout**; that checkout preserved the exact production index and favicon, themed navigation and new features. This staging merge has not been confirmed pushed to GitHub because Acer remote access stopped responding during the final browser check. Do not deploy the older branch assets.
+The running production image `localhost/v79-brand-pos:20261106-r1` contained a newer customised frontend than the original feature branch. A controlled three-way merge preserved the production `index.html`, approved `favicon.svg`, 14 branded images, app manifest, styling and light/dark preference while adding new technician and reporting features. This merge was **pushed to PR #17** in commit `b228699`; the expanded browser checks were pushed as `f884057`.
 
-The previously verified branch Chrome checks cannot substitute for a fresh test of the newly merged production-branded UI. Live Hub MFA/SSO and entitlement revalidation are still unverified for the proposed new image.
+Verification on the Acer staging branch:
+- Google Chrome with authenticated *development* test membership: production favicon, logo, manifest and functional light/dark toggle **PASS**.
+- Report navigation, 10 KPI cards, 12 completed periods, CSV control and methodology **PASS**.
+- Technician viewport 390px, actual live stock and request forms without horizontal overflow **PASS**.
+- GitHub CI #200 and #201 **PASS**. Extra regression checks now guard the favicon and branding in CI.
+- Live POS service: `AUTH_MODE=hub` and `V79_ENTITLEMENT_RECHECK_ENABLED=1`. The running POS's internal Hub endpoint returned HTTP 401 to unsigned requests and HTTP 200 with `allowed:false` for a correctly signed nonexistent membership. This confirms the signed API contract and fail-closed denial of that test case, **not** a real positive login/MFA entitlement.
+- The disposable Acer staging API and restored PostgreSQL 17 container were stopped after testing. No listener remains on test ports 18080 or 55479. The encrypted off-host backup and checksum remain preserved and were reverified.
 
-**No production deployment, database migration or change to favicon has occurred.** Keep PR #17 as draft. Record staged UI/Hub evidence and obtain final owner approval before merge and deployment. The disposable test database cleanup remains pending remote access recovery; never remove an unidentified or production container.
+**Still unverified:** a real customer/user first Google login/MFA and Hub SSO launch with the proposed image, active subscription positive and expired subscription negative entitlement, physical handset testing, Tiquet real-job validation and recovery/RMA for hardware already installed at customers. Do not claim that these passed on the basis of local dev-auth testing.
+
+**No production deployment, database migration or favicon change has occurred.** Keep PR #17 as draft and obtain final approval only after the remaining release gates pass. The database backup proves recovery of the POS data, but a container image rollback alone does not roll back a database migration.
