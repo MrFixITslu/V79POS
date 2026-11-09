@@ -729,6 +729,7 @@ model StockTransfer {
   purpose        StockTransferPurpose @default(GENERAL)
   technicianUserId String?
   jobReference String?
+  requestKey String?
   status         StockTransferStatus @default(REQUESTED)
   notes          String?
   createdBy      String
@@ -745,6 +746,7 @@ model StockTransfer {
   lines        StockTransferLine[]
 
   @@unique([tenantId, number])
+  @@unique([tenantId, requestKey])
   @@index([tenantId, status, createdAt])
 }
 
