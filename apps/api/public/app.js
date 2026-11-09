@@ -1,3 +1,5 @@
+import { renderKpiReports } from './reports-ui.js';
+
 const root = document.querySelector("#app");
 const toastBox = document.querySelector("#toast");
 const h = (value) =>
@@ -31,6 +33,7 @@ const tabs = [
   ["orders", "Orders", "▧"],
   ["purchasing", "Purchasing", "⌁"],
   ["replenishment", "Replenishment", "↗"],
+  ["reports", "Reports", "▥"],
 ];
 const state = {
   token: "",
@@ -49,6 +52,10 @@ const state = {
   selectedTransfer: "",
   transferSerials: [],
   transferLots: [],
+  reportPeriod: "week",
+  reportLocation: "",
+  reportMetric: "netSales",
+  reportError: "",
   search: "",
   demo: false,
   busy: false,
@@ -285,6 +292,47 @@ async function load() {
     !state.data.registers?.some((r) => r.id === state.selectedRegister)
   )
     state.selectedRegister = state.data.registers?.[0]?.id || "";
+}
+function reportQueryString() {
+  const query = new URLSearchParams({ period: state.reportPeriod });
+  if (state.reportLocation) query.set("locationId", state.reportLocation);
+  return query.toString();
+}
+async function loadTrends() {
+  if (state.demo || !can("reports.read")) return;
+  state.reportError = "";
+  state.data.trends = null;
+  render();
+  try {
+    state.data.trends = await api("/v1/reports/trends?" + reportQueryString());
+  } catch (error) {
+    state.reportError = error.message;
+    toast("Report could not be loaded: " + error.message, true);
+  }
+  render();
+}
+async function exportTrendsCsv() {
+  if (state.demo) return toast("Connect through Hub to export real business data.", true);
+  const response = await fetch("/v1/reports/trends.csv?" + reportQueryString(), {
+    credentials: "same-origin", cache: "no-store",
+    headers: {
+      ...(state.token ? { Authorization: "Bearer " + state.token } : {}),
+      ...(state.tenant ? { "x-v79-tenant-id": state.tenant } : {})
+    }
+  });
+  if (!response.ok) {
+    const details = await response.json().catch(() => ({}));
+    throw Error(details.message || details.error || "CSV export failed (" + response.status + ")");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "v79-pos-kpis-" + state.reportPeriod + ".csv";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function field(name, label, type = "text", value = "", extra = "") {
   return `<div class="field"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}></div>`;
@@ -622,6 +670,15 @@ function purchasing() {
     `<div class="split"><section class="card section"><h2>Purchase orders</h2>${orders.length ? table(["PO", "Supplier", "Destination", "Status", "Expected", "Actions"], orders) : empty("No purchase orders yet. Link a product to a supplier, then create an order.")}</section><section class="card section"><h2>Suppliers</h2>${suppliers.length ? table(["Name", "Lead time", "Email"], suppliers) : empty("No suppliers configured.")}</section></div>`
   );
 }
+function reports() {
+  if (!can("reports.read"))
+    return header("Reports & analytics", "Your business KPI history") + needs("reports.read");
+  return renderKpiReports({
+    report: state.data.trends, period: state.reportPeriod,
+    locationId: state.reportLocation, metric: state.reportMetric,
+    locations: state.data.locations || [], demo: state.demo, error: state.reportError
+  });
+}
 function replenishment() {
   if (!can("replenishment.read"))
     return (
@@ -652,6 +709,7 @@ const pages = {
   orders,
   purchasing,
   replenishment,
+  reports,
 };
 function modal(title, contents, id, button = "Save") {
   const old = document.querySelector("#dialog");
@@ -1589,6 +1647,21 @@ root.addEventListener("input", (event) => {
   }
 });
 root.addEventListener("change", (event) => {
+  if (event.target.id === "report-period") {
+    state.reportPeriod = event.target.value;
+    loadTrends();
+    return;
+  }
+  if (event.target.id === "report-location") {
+    state.reportLocation = event.target.value;
+    loadTrends();
+    return;
+  }
+  if (event.target.id === "report-metric") {
+    state.reportMetric = event.target.value;
+    render();
+    return;
+  }
   if (event.target.id === "register-select") {
     state.selectedRegister = event.target.value;
     state.cart = [];
@@ -1609,6 +1682,7 @@ root.addEventListener("click", async (event) => {
     state.page = target.dataset.page;
     state.search = "";
     render();
+    if (state.page === "reports" && !state.demo) await loadTrends();
     document.querySelector("#main")?.focus();
     return;
   }
@@ -1778,11 +1852,24 @@ root.addEventListener("click", async (event) => {
     case "refresh":
       try {
         await load();
+        if (state.page === "reports" && !state.demo) await loadTrends();
         render();
         toast("Data refreshed");
       } catch (err) {
         toast(err.message, true);
       }
+      break;
+    case "report-refresh":
+      await loadTrends();
+      break;
+    case "report-csv":
+      try {
+        await exportTrendsCsv();
+      } catch (error) { toast(error.message, true); }
+      break;
+    case "report-print":
+      if (!state.data.trends) return toast("Load the latest report before printing.", true);
+      window.print();
       break;
     case "clear-cart":
       state.cart = [];
