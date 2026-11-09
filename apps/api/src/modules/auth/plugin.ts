@@ -118,6 +118,16 @@ export async function registerAuth(app: FastifyInstance) {
       ...builtInPermissions(membership.roleKey),
       ...membership.role.permissions.map(p => p.permission)
     ]);
+    // A technician can never inherit stock access to MAIN or another person's MOBILE
+    // location, even when a Hub team sync previously assigned the shared store.
+    const technicianLocationIds = membership.roleKey === 'TECHNICIAN'
+      ? new Set((await prisma.location.findMany({
+          where: { tenantId, active: true, type: 'MOBILE',
+            custodianUserId: identity.userId,
+            id: { in: membership.locationAccess.map(item => item.locationId) } },
+          select: { id: true }
+        })).map(location => location.id))
+      : null;
     const allLocations = membership.roleKey === 'OWNER' || membership.roleKey === 'ADMIN';
     const auth: AuthContext = {
       userId: identity.userId,
@@ -125,7 +135,7 @@ export async function registerAuth(app: FastifyInstance) {
       membershipId: membership.id,
       roleKey: membership.roleKey,
       permissions,
-      locationIds: new Set(membership.locationAccess.map(item => item.locationId)),
+      locationIds: technicianLocationIds ?? new Set(membership.locationAccess.map(item => item.locationId)),
       allLocations
     };
     request.auth = auth;
