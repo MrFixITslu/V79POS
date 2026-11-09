@@ -17,7 +17,7 @@ if (process.env.POS_TEST_CONFIRM !== 'disposable-local-db' ||
 }
 const profile = mkdtempSync(join(tmpdir(), 'v79pos-browser-'));
 const browser = spawn('google-chrome', [
-  '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+  '--headless=new', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
   '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=19229',
   '--user-data-dir=' + profile, '--window-size=1366,960', base
 ], { stdio: 'ignore' });
