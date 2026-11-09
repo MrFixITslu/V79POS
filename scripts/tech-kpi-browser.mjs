@@ -124,5 +124,6 @@ try {
 } finally {
   if (ws) ws.close();
   browser.kill('SIGTERM');
-  rmSync(profile, { recursive: true, force: true });
+  try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); }
+  catch (error) { console.warn('QA_BROWSER_PROFILE_CLEANUP_DEFERRED=' + error.code); }
 }
