@@ -73,6 +73,8 @@ async function ready(expression, label) {
     if (result) return result;
     await delay(250);
   }
+  const diagnostics = await evaluate('({url:location.href,ready:document.readyState,body:document.body?.innerText?.slice(0,600),scripts:Array.from(document.scripts).map(x=>x.src),shell:!!document.querySelector(".shell")})').catch(error => ({diagnosticError:error.message}));
+  console.error('BROWSER_READY_DIAGNOSTICS=' + JSON.stringify(diagnostics));
   throw new Error('Browser timed out waiting for ' + label);
 }
 async function authoriseAs(userId) {
@@ -92,6 +94,17 @@ try {
   await authoriseAs('integration-owner');
   await navigate('/');
   await ready('!!document.querySelector(".shell")', 'POS shell');
+  const brand = await evaluate('({title:document.title,icon:document.querySelector("link[rel=icon]")?.getAttribute("href"),manifest:document.querySelector("link[rel=manifest]")?.getAttribute("href"),logo:!!document.querySelector(".sidebar .brand img"),themeControl:!!document.querySelector(\'[data-action="theme"]\')})');
+  assert.equal(brand.icon, '/brand/favicon.ico?v=20261106');
+  assert.equal(brand.manifest, '/brand-site.webmanifest');
+  assert.equal(brand.logo, true);
+  assert.equal(brand.themeControl, true);
+  const beforeTheme = await evaluate('document.documentElement.dataset.theme || "light"');
+  await evaluate('document.querySelector(\'[data-action="theme"]\').click()');
+  const afterTheme = await evaluate('document.documentElement.dataset.theme');
+  assert.equal(afterTheme, beforeTheme === 'light' ? 'dark' : 'light');
+  assert.equal(await evaluate('localStorage.getItem("v79-pos-theme")'), afterTheme);
+  console.log('PASS preserved favicon, manifest, production logo and functional light/dark preference');
   await evaluate('document.querySelector(\'[data-page="reports"]\').click()');
   await ready('document.querySelectorAll(".report-kpi").length === 10', '10 verified KPI cards');
   const count = await evaluate('document.querySelectorAll(".report-page tbody tr").length');
