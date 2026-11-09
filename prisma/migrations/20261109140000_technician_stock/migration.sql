@@ -6,7 +6,9 @@ ALTER TABLE "Location" ADD COLUMN "custodianUserId" TEXT;
 CREATE UNIQUE INDEX "Location_tenantId_custodianUserId_key" ON "Location"("tenantId", "custodianUserId");
 ALTER TABLE "StockTransfer" ADD COLUMN "purpose" "StockTransferPurpose" NOT NULL DEFAULT 'GENERAL',
   ADD COLUMN "technicianUserId" TEXT,
-  ADD COLUMN "jobReference" TEXT;
+  ADD COLUMN "jobReference" TEXT,
+  ADD COLUMN "requestKey" TEXT;
+CREATE UNIQUE INDEX "StockTransfer_tenantId_requestKey_key" ON "StockTransfer"("tenantId", "requestKey");
 CREATE TABLE "TechnicianUsage" (
   "id" TEXT NOT NULL,
   "tenantId" TEXT NOT NULL,
