@@ -185,4 +185,8 @@ const close = async () => {
 process.on('SIGTERM', close);
 process.on('SIGINT', close);
 
-await app.listen({ port: config.PORT, host: '0.0.0.0' });
+// Disposable integration tests may opt into a loopback-only dev listener.
+// Production remains unchanged and does not honour the test-only flag.
+const listenHost = config.NODE_ENV !== 'production' && process.env.POS_DEV_LOOPBACK_ONLY === '1'
+  ? '127.0.0.1' : '0.0.0.0';
+await app.listen({ port: config.PORT, host: listenHost });
