@@ -52,6 +52,78 @@ export async function transferRoutes(app: FastifyInstance) {
     });
   });
 
+  // Warehouse-controlled allocations for individually traceable technician issues.
+  // Allocation is always performed against the warehouse source, never client-assigned custody.
+  app.post('/v1/transfers/:id/allocate', { preHandler: requirePermission('inventory.transfer') }, async request => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const body = z.object({
+      serialNumberIds: z.array(z.string().min(1)).max(100).default([]),
+      lotAllocations: z.array(z.object({ lotId: z.string().min(1),
+        quantity: z.number().positive().finite().max(1000000000) })).max(100).default([])
+    }).parse(request.body);
+    return serializable(async tx => {
+      const transfer = await tx.stockTransfer.findFirst({
+        where: { id, tenantId: request.auth.tenantId },
+        include: { lines: { include: { productVariant: { include: { product: true } } } } }
+      });
+      if (!transfer) throw notFound('Transfer not found');
+      assertLocationAccess(request, transfer.fromLocationId);
+      if (transfer.purpose !== StockTransferPurpose.TECHNICIAN_ISSUE ||
+          !['REQUESTED','APPROVED'].includes(transfer.status)) {
+        throw conflict('Only pending technician issue requests can be allocated');
+      }
+      if (transfer.lines.length !== 1) throw conflict('Technician issue must contain exactly one stock item');
+      const line = transfer.lines[0];
+      const product = line.productVariant;
+      if (product.product.productType === 'SERIALIZED') {
+        if (!Number.isInteger(Number(line.quantity)) ||
+            body.serialNumberIds.length !== Number(line.quantity) ||
+            new Set(body.serialNumberIds).size !== body.serialNumberIds.length) {
+          throw conflict('One distinct serial number is required for each issued unit');
+        }
+        if (body.lotAllocations.length) throw conflict('Serialised stock cannot have lot allocations');
+        const serials = await tx.inventorySerial.findMany({
+          where: { id: { in: body.serialNumberIds }, tenantId: request.auth.tenantId,
+            locationId: transfer.fromLocationId, productVariantId: line.productVariantId,
+            status: 'AVAILABLE' }
+        });
+        if (serials.length !== body.serialNumberIds.length) throw conflict('Requested serials are unavailable');
+      } else if (product.product.productType === 'LOT_TRACKED' || product.requiresExpiry) {
+        if (body.serialNumberIds.length) throw conflict('Lot stock cannot have serial allocations');
+        if (new Set(body.lotAllocations.map(a => a.lotId)).size !== body.lotAllocations.length ||
+            !body.lotAllocations.reduce((sum,a) => sum.plus(a.quantity), new Prisma.Decimal(0))
+              .equals(line.quantity)) {
+          throw conflict('Lot allocations must total the exact issued quantity');
+        }
+        for (const a of body.lotAllocations) {
+          const lot = await tx.inventoryLot.findFirst({ where: {
+            id: a.lotId, tenantId: request.auth.tenantId, locationId: transfer.fromLocationId,
+            productVariantId: line.productVariantId
+          } });
+          if (!lot || lot.quantityOnHand.lt(a.quantity)) throw conflict('Selected lot is unavailable or insufficient');
+        }
+      } else if (body.serialNumberIds.length || body.lotAllocations.length) {
+        throw conflict('This item does not require serial or lot allocation');
+      }
+      await tx.stockTransferSerialAllocation.deleteMany({ where: { stockTransferLineId: line.id } });
+      await tx.stockTransferLotAllocation.deleteMany({ where: { stockTransferLineId: line.id } });
+      if (body.serialNumberIds.length) await tx.stockTransferSerialAllocation.createMany({
+        data: body.serialNumberIds.map(serialId => ({ stockTransferLineId: line.id, serialId }))
+      });
+      if (body.lotAllocations.length) await tx.stockTransferLotAllocation.createMany({
+        data: body.lotAllocations.map(a => ({ stockTransferLineId: line.id, lotId: a.lotId, quantity: a.quantity }))
+      });
+      await writeAudit(tx, {
+        tenantId: request.auth.tenantId, actorUserId: request.auth.userId,
+        action: 'technician.issue_allocated', resourceType: 'StockTransfer', resourceId: transfer.id,
+        after: { allocatedSerialCount: body.serialNumberIds.length,
+          allocatedLotCount: body.lotAllocations.length, sourceLocationId: transfer.fromLocationId }
+      });
+      return { transferId: transfer.id, allocatedSerials: body.serialNumberIds.length,
+        allocatedLots: body.lotAllocations.length, status: transfer.status };
+    });
+  });
+
   app.post('/v1/transfers/:id/approve', { preHandler: requirePermission('inventory.transfer') }, async request => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
     const transfer = await prisma.stockTransfer.findFirst({ where: { id, tenantId: request.auth.tenantId } });
