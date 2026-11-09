@@ -1,6 +1,6 @@
 # Private V79 POS / Hub integration staging — 9 November 2026
 
-**Status: configuration prepared; image build started; build completion and staging start NOT VERIFIED.** Desktop Commander reached its monthly usage limit while the isolated image build was running. The live POS application and database have not been changed by this staging preparation.
+**Status: staging image, isolated PostgreSQL/Redis, encrypted-backup restore and technician migration confirmed from the owner's terminal output on 9 November 2026. Staging API and Hub SSO are NOT yet verified.** Production POS image remains unchanged and healthy in the user's latest check.
 
 ## Alternatives and REDTEAM
 
@@ -23,7 +23,21 @@ Risks to prevent: staging accidentally connecting to the live POS DB, exposing c
 - Stage image build was started using low-priority `ionice -c3 nice -n 10 docker build --progress=plain -t v79pos:hubqa-2590623 .` in the *isolated checkout*, logging to `/home/firelion/v79-pos-hubqa-20261109/build.log`. **Its final result was not observed**.
 - Production POS was still `localhost/v79-brand-pos:20261106-r1`, **healthy**, on the last verified check.
 
-## Resume safely after remote access is available
+## Owner-confirmed staging milestones (9 November 2026)
+
+The owner ran the verification and restore commands from the Acer and supplied the complete success output:
+
+- Stage image `v79pos:hubqa-2590623` exists (image ID `sha256:9a1abea699f8f750feb21b2f53e5973389442a6be1ba945293913af973bf2433`).
+- The named isolated PostgreSQL 17 and Redis containers became healthy.
+- Before restoration, `STAGING_TABLES=0` was observed.
+- Encrypted archive checksum `OK` and `EMPTY_STAGING_DATABASE=PASS` were observed.
+- `STAGING_RESTORE=PASS` was observed from `pg_restore --single-transaction --exit-on-error` against the *stage-only* `v79pos_hubqa` database.
+- Staged Prisma migration `20261109140000_technician_stock` reported success, with `STAGING_MIGRATION=PASS` and the count result `2|3|2` (tenant count, inventory ledger count, migration count).
+- Production image still `localhost/v79-brand-pos:20261106-r1`, `STATUS=healthy`.
+
+**Next:** start `api` only from this named Compose file; check `/ready` is HTTP 200, public branding assets load, unauthenticated `/v1/me` is 401 and that the published port is loopback-only. Then perform controlled owner-only Hub SSO and access tests. The private stage has production-derived data; do not expose it publicly.
+
+## Historical preparation and restore procedure (already completed)
 
 On the production server (or via authenticated Tailscale SSH), start with **read-only verification**:
 
