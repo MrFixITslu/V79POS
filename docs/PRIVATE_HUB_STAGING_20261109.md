@@ -23,6 +23,20 @@ Risks to prevent: staging accidentally connecting to the live POS DB, exposing c
 - Stage image build was started using low-priority `ionice -c3 nice -n 10 docker build --progress=plain -t v79pos:hubqa-2590623 .` in the *isolated checkout*, logging to `/home/firelion/v79-pos-hubqa-20261109/build.log`. **Its final result was not observed**.
 - Production POS was still `localhost/v79-brand-pos:20261106-r1`, **healthy**, on the last verified check.
 
+## Owner-confirmed private staging API checks (9 November 2026)
+
+The owner started only the `api` service in the named private Compose stack and reported the following outputs:
+
+- `v79-pos-hubqa-db`, `v79-pos-hubqa-redis`, and `v79-pos-hubqa-api`: **healthy**
+- `STAGING_ISOLATION_AND_AUTH=PASS`: stage URL targets `db/v79pos_hubqa`, `AUTH_MODE=hub`, and `V79_ENTITLEMENT_RECHECK_ENABLED=1`
+- `/ready`: `{"status":"ready","database":"ok"}`
+- Unauthenticated `/v1/me`: HTTP **401**
+- `/brand/favicon.ico`, `/brand-site.webmanifest`, `/reports-ui.js`, `/technician`: HTTP **200**
+- Docker exposed staging API: **`127.0.0.1:18081` only**
+- Production POS: **`localhost/v79-brand-pos:20261106-r1`, healthy**
+
+**Acceptance scope:** these verify service readiness, stage isolation, public asset availability, and rejection of unauthenticated API calls. They **do not** prove a valid Hub user can log into staging, that subscription entitlements are correctly accepted/revoked for a real user, or that the private HTTP tunnel reproduces production HTTPS cookies. No user tokens should be copied into chat or logs, and no staging service should be exposed on public DNS.
+
 ## Owner-confirmed staging milestones (9 November 2026)
 
 The owner ran the verification and restore commands from the Acer and supplied the complete success output:
