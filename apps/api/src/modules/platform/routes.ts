@@ -13,6 +13,11 @@ const provisionSchema = z.object({
   role: z.literal('owner')
 });
 
+const organizationNameSchema = z.object({
+  organizationId: z.string().min(8).max(100),
+  name: z.string().trim().min(2).max(120).refine(name => !/[\u0000-\u001f\u007f]/.test(name)),
+});
+
 const teamMemberProvisionSchema = z.object({
   organizationId: z.string().min(8).max(100),
   user: z.object({ id: z.string().uuid() }),
@@ -49,6 +54,26 @@ export async function platformRoutes(app: FastifyInstance) {
       await tx.register.upsert({ where: { tenantId_code: { tenantId: organization.id, code: 'REG-01' } }, create: { tenantId: organization.id, locationId: location.id, name: 'Register 1', code: 'REG-01' }, update: {} });
     });
     return { organizationId: organization.id, ownerUserId: user.id, provisioned: true };
+  });
+
+
+  // Hub-only, tenant-scoped display-name sync. No change to role, slug,
+  // currency, locations, transactions, catalogue or inventory.
+  app.post('/api/platform/organization/name', async (request, reply) => {
+    const parsed = organizationNameSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Invalid organisation-name update.' });
+    const { organizationId, name } = parsed.data;
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: organizationId },
+      select: { id: true, active: true },
+    });
+    if (!tenant?.active) return reply.code(404).send({ error: 'Hub-linked POS tenant not found.' });
+    const changed = await prisma.tenant.update({
+      where: { id: organizationId },
+      data: { name },
+      select: { name: true },
+    });
+    return { success: true, organizationId, name: changed.name };
   });
 
   app.post('/api/platform/members/provision', async (request, reply) => {
