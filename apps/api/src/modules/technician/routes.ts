@@ -10,27 +10,7 @@ import { postInventoryMovement } from '../inventory/service.js';
 import { consumeFifoCost } from '../inventory/costing.js';
 import { writeAudit } from '../../lib/audit.js';
 import { emitEvent } from '../../lib/outbox.js';
-
-const stockQuantity = z.number().finite().min(0.0001).max(1000000000)
-  .refine(value => Number(value.toFixed(4)) === value, 'Use at most four decimal places');
-const allocation = z.object({ lotId: z.string().min(1), quantity: stockQuantity });
-const item = z.object({
-  productVariantId: z.string().min(1),
-  quantity: stockQuantity,
-  serialNumberIds: z.array(z.string().min(1)).max(100).default([]),
-  lotAllocations: z.array(allocation).max(100).default([])
-});
-export const technicianRequestSchema = item.extend({
-  purpose: z.enum(['TECHNICIAN_ISSUE', 'TECHNICIAN_RETURN_GOOD', 'TECHNICIAN_RETURN_FAULTY']),
-  warehouseId: z.string().min(1),
-  requestKey: z.string().uuid(),
-  jobReference: z.string().trim().max(120).optional(),
-  reason: z.string().trim().min(3).max(500)
-});
-export const technicianUseSchema = item.extend({
-  requestKey: z.string().uuid(),
-  jobReference: z.string().trim().min(2).max(120)
-});
+import { technicianItemSchema, technicianRequestSchema, technicianUseSchema } from './validation.js';
 
 async function custody(tx: Prisma.TransactionClient, request: FastifyRequest) {
   const mobile = await tx.location.findFirst({
@@ -40,7 +20,7 @@ async function custody(tx: Prisma.TransactionClient, request: FastifyRequest) {
   return mobile;
 }
 
-async function checkAllocations(tx: Prisma.TransactionClient, input: z.infer<typeof item>,
+async function checkAllocations(tx: Prisma.TransactionClient, input: z.infer<typeof technicianItemSchema>,
   tenantId: string, fromLocationId: string) {
   const variant = await tx.productVariant.findFirst({
     where: { id: input.productVariantId, tenantId, active: true, trackStock: true, product: { active: true } },
