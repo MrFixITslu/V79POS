@@ -21,7 +21,7 @@ const transferSchema = z.object({
 export async function transferRoutes(app: FastifyInstance) {
   app.get('/v1/transfers', { preHandler: requirePermission('inventory.read') }, async request => {
     const rows = await prisma.stockTransfer.findMany({
-      where: { tenantId: request.auth.tenantId }, include: { fromLocation: true, toLocation: true, lines: { include: { productVariant: true } } }, orderBy: { createdAt: 'desc' }, take: 100
+      where: { tenantId: request.auth.tenantId }, include: { fromLocation: true, toLocation: true, lines: { include: { productVariant: { include: { product: true } } } } }, orderBy: { createdAt: 'desc' }, take: 100
     });
     return { transfers: rows.filter(row => request.auth.allLocations || request.auth.locationIds.has(row.fromLocationId) || request.auth.locationIds.has(row.toLocationId)) };
   });
