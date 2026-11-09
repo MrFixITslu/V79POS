@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { assertLocationAccess, requirePermission } from '../auth/context.js';
+import { notFound } from '../../lib/errors.js';
 import { completedBuckets, bucketFor, relativeChange, type ReportPeriod } from './periods.js';
 
 export const reportQuery = z.object({
@@ -31,6 +32,14 @@ const values = (): Record<KpiCode, number> => ({
 export async function buildTrends(request: FastifyRequest, period: ReportPeriod, locationId?: string) {
   if (locationId) assertLocationAccess(request, locationId);
   const tenantId = request.auth.tenantId;
+  // An owner has broad location permission, but requested IDs must still belong
+  // to the authenticated tenant (never silently accept foreign identifiers).
+  if (locationId) {
+    const ownLocation = await prisma.location.findFirst({
+      where: { id: locationId, tenantId, active: true }, select: { id: true }
+    });
+    if (!ownLocation) throw notFound('Reporting location was not found');
+  }
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId }, select: { timezone: true, currency: true, name: true }
   });
