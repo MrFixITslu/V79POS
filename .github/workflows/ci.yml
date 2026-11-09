@@ -20,6 +20,9 @@ jobs:
       - run: pnpm db:generate
       - run: pnpm db:validate
       - run: node --check apps/api/public/app.js
+      - run: node --check apps/api/public/reports-ui.js
+      - run: node --check apps/api/public/technician.js
+      - run: node scripts/backup-restore-safety.test.mjs
       - run: pnpm build
       - run: pnpm test
       - run: pnpm lint
