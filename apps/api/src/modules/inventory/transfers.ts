@@ -11,11 +11,14 @@ import { assertLocationAccess, hasPermission, requirePermission } from '../auth/
 import { postInventoryMovement } from './service.js';
 import { consumeFifoCost } from './costing.js';
 
+const stockQty = z.coerce.number().finite().min(0.0001).max(1000000000)
+  .refine(value => Number(value.toFixed(4)) === value, 'Use at most four decimal places');
+
 const transferSchema = z.object({
   fromLocationId: z.string().min(1),
   toLocationId: z.string().min(1),
   notes: z.string().max(1000).optional(),
-  lines: z.array(z.object({ productVariantId: z.string().min(1), quantity: z.coerce.number().positive().finite(), lotAllocations: z.array(z.object({lotId:z.string(),quantity:z.coerce.number().positive().finite()})).default([]), serialNumberIds:z.array(z.string()).default([]) })).min(1)
+  lines: z.array(z.object({ productVariantId: z.string().min(1), quantity: stockQty, lotAllocations: z.array(z.object({lotId:z.string(),quantity:stockQty})).default([]), serialNumberIds:z.array(z.string()).default([]) })).min(1)
 });
 
 export async function transferRoutes(app: FastifyInstance) {
@@ -59,7 +62,7 @@ export async function transferRoutes(app: FastifyInstance) {
     const body = z.object({
       serialNumberIds: z.array(z.string().min(1)).max(100).default([]),
       lotAllocations: z.array(z.object({ lotId: z.string().min(1),
-        quantity: z.number().positive().finite().max(1000000000) })).max(100).default([])
+        quantity: stockQty })).max(100).default([])
     }).parse(request.body);
     return serializable(async tx => {
       const transfer = await tx.stockTransfer.findFirst({
