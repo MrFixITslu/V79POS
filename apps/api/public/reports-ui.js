@@ -10,7 +10,7 @@ const money = (value, currency) => new Intl.NumberFormat('en-LC', {
 const units = (value, unit, currency) =>
   unit === 'XCD' ? money(value, currency) : nfmt(value, unit === 'count' ? 0 : 4);
 
-export function renderKpiReports({ report, period, locationId, metric, locations, demo }) {
+export function renderKpiReports({ report, period, locationId, metric, locations, demo, error }) {
   if (demo) return '<div class="pagehead"><h1>Reports & analytics</h1></div>' +
     '<section class="card section">Live reporting needs a signed-in V79 Hub business account. Demo figures are not used for performance reports.</section>';
   const filter = '<div class="report-controls"><label for="report-period">Compare</label>' +
@@ -28,7 +28,7 @@ export function renderKpiReports({ report, period, locationId, metric, locations
   const header = '<div class="pagehead"><div><div class="eyebrow">V79 DIGITAL POS / REPORTING</div>' +
     '<h1>Reports & analytics</h1><p>Verified POS business performance across completed calendar periods</p></div></div>';
   if (!report) return header + filter + '<section class="card section" role="status">' +
-    'Loading live reporting data…</section>';
+    (error ? '<p class="notice error">' + escape(error) + '</p>' : 'Loading live reporting data…') + '</section>';
   const definition = report.definitions.find(d => d.key === metric) || report.definitions[0];
   const formatter = v => units(v, definition.unit, report.currency);
   const points = report.series || [];
