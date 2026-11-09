@@ -124,11 +124,11 @@ try {
   const { data: foreignLocation } = await prisma.location.create({
     data: { tenantId: foreignId, code: 'FOREIGN', name: 'Foreign warehouse', type: 'WAREHOUSE' }
   }).then(result => ({ data: result }));
-  await owner('GET', '/v1/reports/trends?locationId=' + foreignLocation.id, null, 403);
+  await owner('GET', '/v1/reports/trends?locationId=' + foreignLocation.id, null, 404);
   await owner('POST', '/v1/inventory/adjustments', {
     locationId: foreignLocation.id, productVariantId: variantId, type: 'ADJUSTMENT_GAIN',
     quantity: 1, reason: 'Cross tenant'
-  }, 403);
+  }, 404);
   await tech('POST', '/v1/technician/requests', {
     ...issueInput, requestKey: idempotency(), warehouseId: foreignLocation.id
   }, 404);
