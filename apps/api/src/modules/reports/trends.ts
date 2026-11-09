@@ -182,6 +182,8 @@ export async function buildTrends(request: FastifyRequest, period: ReportPeriod,
 }
 
 function csvField(value: string | number | null | undefined): string {
+  // Numbers remain numeric, including negative refunds/net sales.
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   const str = value == null ? '' : String(value);
   // Prevent spreadsheet formula execution if text ever derives from a user-supplied value.
   const cleaned = /^[\s]*[=+\-@\t\r]/.test(str) ? "'" + str : str;
