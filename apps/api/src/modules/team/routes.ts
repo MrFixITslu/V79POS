@@ -28,7 +28,8 @@ export async function teamRoutes(app: FastifyInstance) {
         active: true,
         ...(request.auth.allLocations ? {} : { locationAccess: { some: { locationId: { in: [...request.auth.locationIds] } } } })
       },
-      include: { role: true, locationAccess: { include: { location: true } } },
+      include: { role: true, profile: { select: { displayName: true, employeeCode: true } },
+        locationAccess: { include: { location: true } } },
       orderBy: { createdAt: 'asc' }
     }) };
   });
@@ -45,6 +46,14 @@ export async function teamRoutes(app: FastifyInstance) {
     }
     const role = await prisma.tenantRole.findUnique({ where: { tenantId_key: { tenantId: request.auth.tenantId, key: body.roleKey } } });
     if (!role) throw notFound('Role not found');
+    const targetMembership = await prisma.membership.findUnique({
+      where: { tenantId_userId: { tenantId: request.auth.tenantId, userId: body.userId } },
+      select: { roleKey: true, active: true }
+    });
+    if (targetMembership?.active && ['OWNER', 'ADMIN'].includes(targetMembership.roleKey) &&
+        request.auth.roleKey !== 'OWNER') {
+      throw conflict('Only the owner can change an existing owner or administrator');
+    }
     if (body.userId === request.auth.userId && request.auth.roleKey !== 'OWNER') throw conflict('You cannot change your own POS role or location access');
     if (['OWNER', 'ADMIN'].includes(body.roleKey) && request.auth.roleKey !== 'OWNER') throw conflict('Only an owner can assign owner or admin roles');
     if (!request.auth.allLocations && body.locationIds.some(locationId => !request.auth.locationIds.has(locationId))) throw conflict('You cannot assign access outside your own locations');
