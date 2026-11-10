@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # V79 POS: exact tested image -> production API only; no production db/worker restart.
 # Requires a freshly verified off-host encrypted PostgreSQL backup SHA-256 as arg 1.
+# IMPORTANT: docker compose run must never consume the streamed bash script stdin.
 set -Eeuo pipefail
 umask 077
 
@@ -137,7 +138,7 @@ echo "OFFHOST_ENCRYPTED_BACKUP_WITNESS=RECORDED"
 # staging credentials. This is the tested additive Prisma migration.
 if [[ "$MIGRATION" == PENDING ]]; then
     echo "APPLYING_ADDITIVE_TECHNICIAN_MIGRATION"
-    "${NEW[@]}" run --rm --no-deps -T api ./node_modules/.bin/prisma migrate deploy ||
+    "${NEW[@]}" run --rm --no-deps -T api ./node_modules/.bin/prisma migrate deploy </dev/null ||
         fail "database_migration_failed_live_api_unchanged"
 fi
 [[ "$(get_migration)" == APPLIED ]] || fail "migration_not_recorded_as_applied"
