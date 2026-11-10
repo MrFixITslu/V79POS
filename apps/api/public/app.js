@@ -34,6 +34,7 @@ const tabs = [
   ["products", "Products", "◇"],
   ["inventory", "Inventory", "▤"],
   ["stock-control", "Stock Control", "⇄"],
+  ["technician-stock", "Technician Inventory", "▤"],
   ["customers", "Customers", "♙"],
   ["sales", "Sales", "◴"],
   ["orders", "Orders", "▧"],
@@ -268,6 +269,13 @@ function normalizeLoadedData(key, body) {
       throw Error("Dashboard response is invalid. Please refresh.");
     return report;
   }
+  // The Team API returns an object with a members array, unlike list endpoints.
+  // Preserve its shape for the stock-custody assignment and management views.
+  if (key === "team") {
+    if (!Array.isArray(body?.members))
+      throw Error("Team response is invalid. Please refresh.");
+    return { members: body.members };
+  }
   const field = key === "stockCounts" ? "counts" : key;
   const rows = Array.isArray(body) ? body : (body?.[field] ?? body?.[key]);
   if (!Array.isArray(rows))
@@ -316,7 +324,7 @@ async function load() {
   const results = await Promise.allSettled(
     requests.map(async ([key, path, permission]) => [
       key,
-      can(permission) ? normalizeLoadedData(key, await api(path)) : (key === "dashboard" ? {} : []),
+      can(permission) ? normalizeLoadedData(key, await api(path)) : (key === "dashboard" ? {} : key === "team" ? { members: [] } : []),
     ]),
   );
   state.loadErrors = {};
@@ -463,11 +471,15 @@ function renderLogin() {
 // Navigation is a presentation convenience; API permissions remain authoritative.
 const pagePermissions = {
   overview: "reports.read", register: "sales.create", products: "catalogue.read",
-  inventory: "inventory.read", "stock-control": "inventory.read", customers: "customers.read",
+  inventory: "inventory.read", "stock-control": "inventory.read", "technician-stock": "inventory.read", customers: "customers.read",
   sales: "sales.read", orders: "orders.read", purchasing: "procurement.read", replenishment: "replenishment.read",
   reports: "reports.read",
 };
-function visibleTabs() { return tabs.filter(([id]) => can(pagePermissions[id])); }
+function visibleTabs() {
+  return tabs.filter(([id]) => can(pagePermissions[id]) &&
+    (id !== "technician-stock" ||
+      ["OWNER", "ADMIN", "MANAGER"].includes(state.me?.roleKey)));
+}
 function navButton([id, label, icon]) {
   return `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
 }
@@ -480,6 +492,7 @@ function pageContent() {
   const dependencies = {
     register: ["products", "registers", "inventory"], products: ["products"],
     inventory: ["inventory"], "stock-control": ["transfers", "stockCounts", "locations"],
+    "technician-stock": ["team", "inventory", "locations", "transfers"],
     customers: ["customers"], sales: ["sales"], orders: ["orders"],
     purchasing: ["suppliers", "purchaseOrders"], replenishment: ["recommendations"],
   };
@@ -498,7 +511,7 @@ function render() {
   const label = tabs.find(([id]) => id === state.page)?.[1] || "Workspace";
   document.title = `${label} | Vision79 POS`;
   const title = state.demo ? "Sample business" : state.me?.roleKey || "Business workspace";
-  const nav = [["Sell & serve", ["overview", "register", "sales", "orders", "customers"]], ["Stock & supply", ["products", "inventory", "stock-control", "purchasing", "replenishment"]], ["Reporting", ["reports"]]]
+  const nav = [["Sell & serve", ["overview", "register", "sales", "orders", "customers"]], ["Stock & supply", ["products", "inventory", "technician-stock", "stock-control", "purchasing", "replenishment"]], ["Reporting", ["reports"]]]
     .map(([group, ids]) => {
       const rows = allowed.filter(([id]) => ids.includes(id));
       return rows.length ? `<div class="nav-group"><div class="nav-label">${group}</div>${rows.map(navButton).join("")}</div>` : "";
@@ -644,6 +657,53 @@ function inventory() {
     `<section class="card section">${rows.length ? table(["Product", "Location", "On hand", "Available", "Status"], rows) : empty("No stock balances yet. Receive stock or make an authorised adjustment.")}</section>`
   );
 }
+// Owner/manager view uses existing tenant- and location-scoped API data only.
+ // Technicians retain their separate /technician workspace; no role elevation.
+function technicianStock() {
+  const authorised = ["OWNER", "ADMIN", "MANAGER"].includes(state.me?.roleKey) &&
+    can("team.read") && can("inventory.read");
+  if (!authorised) return header("Technician Inventory", "Stock custody by technician") +
+    needs("inventory.read");
+  const technicians = (state.data.team?.members || [])
+    .filter(member => member.active && member.roleKey === "TECHNICIAN");
+  const mobile = (state.data.locations || []).filter(location => location.type === "MOBILE");
+  const stock = (state.data.inventory || []).filter(balance =>
+    mobile.some(location => location.id === balance.locationId));
+  const transfers = (state.data.transfers || []).filter(transfer =>
+    ["TECHNICIAN_ISSUE", "TECHNICIAN_RETURN_GOOD", "TECHNICIAN_RETURN_FAULTY"]
+      .includes(transfer.purpose));
+  const byLocation = locationId => technicians.find(member =>
+    (member.locationAccess || []).some(access =>
+      access.locationId === locationId || access.location?.id === locationId));
+  const who = locationId => {
+    const member = byLocation(locationId);
+    return member ? (member.profile?.displayName || member.userId) : "Not assigned";
+  };
+  const pending = transfers.filter(transfer =>
+    ["REQUESTED", "APPROVED", "IN_TRANSIT"].includes(transfer.status));
+  const qtyOnHand = stock.reduce((total, row) => total + Number(row.onHand || 0), 0);
+  const actions = '<button class="btn" data-page="stock-control">Manage transfers</button>' +
+    (["OWNER", "ADMIN"].includes(state.me?.roleKey)
+      ? '<button class="btn primary" data-modal="technician-access">Assign technician</button>'
+      : "");
+  const locationRows = mobile.map(location => {
+    const rows = stock.filter(row => row.locationId === location.id);
+    const quantity = rows.reduce((sum, row) => sum + Number(row.onHand || 0), 0);
+    return `<tr><td><strong>${h(who(location.id))}</strong></td><td>${h(location.name)}</td><td>${h(rows.length)}</td><td>${h(round(quantity))}</td></tr>`;
+  });
+  const stockRows = stock.map(row =>
+    `<tr><td><strong>${h(row.productVariant?.product?.name || row.productVariant?.name || "Item")}</strong><small>${h(row.productVariant?.sku || "")}</small></td><td>${h(who(row.locationId))}</td><td>${h(row.location?.name || mobile.find(location => location.id === row.locationId)?.name || "Mobile")}</td><td>${h(row.onHand)}</td><td>${h(row.available)}</td></tr>`);
+  const transferRows = transfers.map(transfer =>
+    `<tr><td><strong>${h(transfer.number)}</strong><small>${h(date(transfer.createdAt))}</small></td><td>${h((transfer.purpose || "").replaceAll("_", " "))}</td><td>${h(transfer.fromLocation?.name || "—")} → ${h(transfer.toLocation?.name || "—")}</td><td>${h(transfer.jobReference || "—")}</td><td>${badge(transfer.status)}</td></tr>`);
+  return header("Technician Inventory",
+    "Live equipment custody, available stock and warehouse movements for your technicians",
+    `<div class="actions">${actions}</div>`) +
+    `<div class="grid metric-grid">${metric("Assigned technicians", technicians.length, "Active POS technician roles")}${metric("Mobile stock locations", mobile.length, "Dedicated technician custody")}${metric("Units on hand", round(qtyOnHand), "Across visible mobile locations")}${metric("Pending movements", pending.length, "Requested, approved or in transit")}</div>` +
+    `<section class="card section"><h2>Technician custody</h2>${locationRows.length ? table(["Technician", "Stock location", "Stock lines", "Units on hand"], locationRows) : empty("No technician stock locations are assigned. Use Assign technician to create one for an existing team member.")}</section>` +
+    `<section class="card section"><h2>Equipment held by technicians</h2>${stockRows.length ? table(["Equipment", "Technician", "Location", "On hand", "Available"], stockRows) : empty("No equipment is held in technician custody yet.")}</section>` +
+    `<section class="card section"><h2>Technician movements</h2>${transferRows.length ? table(["Reference", "Movement", "Route", "Job", "Status"], transferRows) : empty("No technician issues or returns recorded yet.")}</section>`;
+}
+
 function stockControl() {
   if (!can("inventory.read"))
     return header("Stock Control", "Counts and branch transfers") + needs("inventory.read");
@@ -798,6 +858,7 @@ const pages = {
   products,
   inventory,
   "stock-control": stockControl,
+  "technician-stock": technicianStock,
   customers,
   sales,
   orders,
