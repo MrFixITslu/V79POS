@@ -61,7 +61,7 @@ const technicianView = runInNewContext('(' +
       createdAt:'2026-11-10T00:00:00Z',jobReference:'TQ-1'}]
   }},
   can:(p)=>p==='inventory.read'||p==='team.read'||p==='inventory.transfer',
-  header:(title)=>title,
+  header:(title,description,actions)=>title+(actions||''),
   needs:(permission)=>permission,
   metric:(label,value)=>label+':'+value,
   table:(_,rows)=>rows.join(''),
