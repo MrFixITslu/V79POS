@@ -65,7 +65,15 @@ h=c["HostConfig"]
 assert c["Config"]["User"]=="node"
 assert c["Config"]["Entrypoint"]==["/app/scripts/docker-entrypoint.sh"]
 assert c["Config"]["Cmd"]==["node","apps/api/dist/server.js"]
-assert c["Config"]["Healthcheck"]["Test"]==["CMD","wget","-qO-","http://127.0.0.1:8080/ready"]
+# Direct Docker promotion uses --health-cmd, which Docker stores as
+# CMD-SHELL; the older Compose container used equivalent exec-form CMD.
+# Require the exact same readiness probe, accepting only those two forms.
+health_test=c["Config"]["Healthcheck"]["Test"]
+approved_health_tests=(
+    ["CMD","wget","-qO-","http://127.0.0.1:8080/ready"],
+    ["CMD-SHELL","wget -qO- http://127.0.0.1:8080/ready"],
+)
+assert health_test in approved_health_tests, "unexpected POS readiness probe form"
 assert h["RestartPolicy"]["Name"]=="unless-stopped"
 assert h["Init"] is True and h["Privileged"] is False
 assert "no-new-privileges:true" in (h["SecurityOpt"] or [])
