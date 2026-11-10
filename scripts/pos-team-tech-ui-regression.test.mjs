@@ -32,6 +32,7 @@ assert.match(source,/key === "team" \? \{ members: \[\] \}/,
 const visible = extract('function visibleTabs() {', '\nfunction navButton(');
 const navTest = role => runInNewContext('(' + visible + ')', {
   tabs:[['overview','Overview'],['technician-stock','Technician Inventory']],
+  pagePermissions:{overview:'reports.read','technician-stock':'inventory.read'},
   can:()=>true,
   state:{me:{roleKey:role}}
 })();
