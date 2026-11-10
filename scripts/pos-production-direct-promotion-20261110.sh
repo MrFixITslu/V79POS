@@ -16,7 +16,8 @@ PARKED='v79-pos-pretech-20261110'
 FAILED='v79-pos-failed-20261110'
 OLD_TAG='localhost/v79-brand-pos:20261106-r1'
 OLD_ID='sha256:7103df9054b3433217d01f44f8495336b4ed8b55314217db9cb1167e98a186b6'
-NEW_TAG='v79pos:hubqa-2590623'
+STAGE_TAG='v79pos:hubqa-2590623'
+NEW_TAG='localhost/v79-pos:technician-stock-20261110-r1'
 NEW_ID='sha256:9a1abea699f8f750feb21b2f53e5973389442a6be1ba945293913af973bf2433'
 INTERNAL='v79pos_pos_internal'
 PROXY='proxy_network'
@@ -35,8 +36,16 @@ for name in "$CANDIDATE" "$PARKED" "$FAILED"; do
 done
 [[ "$(docker image inspect "$OLD_TAG" --format '{{.Id}}')" == "$OLD_ID" ]] ||
   fail "rollback_image_identity"
+[[ "$(docker image inspect "$STAGE_TAG" --format '{{.Id}}')" == "$NEW_ID" ]] ||
+  fail "tested_stage_image_identity"
+if docker image inspect "$NEW_TAG" >/dev/null 2>&1; then
+  [[ "$(docker image inspect "$NEW_TAG" --format '{{.Id}}')" == "$NEW_ID" ]] ||
+    fail "preexisting_production_release_tag_drift"
+else
+  docker tag "$STAGE_TAG" "$NEW_TAG"
+fi
 [[ "$(docker image inspect "$NEW_TAG" --format '{{.Id}}')" == "$NEW_ID" ]] ||
-  fail "tested_image_identity"
+  fail "production_release_image_identity"
 [[ "$(docker inspect "$LIVE" --format '{{.Image}}')" == "$OLD_ID" ]] ||
   fail "production_image_identity"
 [[ "$(docker inspect "$LIVE" --format '{{.Config.Image}}')" == "$OLD_TAG" ]] ||
