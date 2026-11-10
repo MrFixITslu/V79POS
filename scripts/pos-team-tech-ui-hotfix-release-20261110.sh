@@ -17,11 +17,11 @@ SRC='/home/firelion/v79-pos-hubqa-20261109/source'
 LOCK_DIR='/home/firelion/v79-pos-technician-release-20261109'
 BASE_TAG='localhost/v79-pos:technician-stock-20261110-r1'
 BASE_ID='sha256:9a1abea699f8f750feb21b2f53e5973389442a6be1ba945293913af973bf2433'
-FIX_TAG='localhost/v79-pos:team-technician-ui-20261110-r2'
+FIX_TAG='localhost/v79-pos:team-technician-ui-20261110-r3'
 LIVE='v79-pos'
-CANDIDATE='v79-pos-teamui-canary-20261110'
-PARKED='v79-pos-preteamui-20261110'
-FAILED='v79-pos-teamui-failed-20261110'
+CANDIDATE='v79-pos-teamui-canary-r3-20261110'
+PARKED='v79-pos-preteamui-r3-20261110'
+FAILED='v79-pos-teamui-failed-r3-20261110'
 INTERNAL='v79pos_pos_internal'
 PROXY='proxy_network'
 
@@ -218,6 +218,39 @@ docker exec "$CANDIDATE" node -e \
  </dev/null || fail "canary_ui_incomplete"
 echo "CANARY_TEAM_AND_TECHNICIAN_UI=PASS"
 
+# Reproduce the production promotion's network detach/reattach sequence on
+# the isolated candidate, *before* stopping the old API. Docker's recorded
+# 'healthy' can be stale immediately after reconnecting networks; require
+# consecutive live HTTP requests to prove database access has recovered.
+probe_readiness() {
+  local target="$1" good=0 attempt
+  for attempt in $(seq 1 45); do
+    [[ "$(docker inspect "$target" --format '{{.State.Running}}' 2>/dev/null || true)" == true ]] ||
+      return 1
+    if docker exec "$target" wget -qO- http://127.0.0.1:8080/ready          </dev/null >/dev/null 2>&1; then
+      good=$((good + 1))
+      if [[ "$good" -ge 3 ]]; then
+        echo "LIVE_HTTP_READY_CONSECUTIVE_200=PASS"
+        return 0
+      fi
+    else
+      good=0
+    fi
+    sleep 2
+  done
+  echo "LIVE_HTTP_READY_CONSECUTIVE_200=FAIL" >&2
+  return 1
+}
+echo "=== TEST API NETWORK REBIND ON DISPOSABLE CANARY ==="
+docker network disconnect "$PROXY" "$CANDIDATE" </dev/null
+docker network connect "$PROXY" "$CANDIDATE" </dev/null
+docker network disconnect "$INTERNAL" "$CANDIDATE" </dev/null
+docker network connect "$INTERNAL" "$CANDIDATE" </dev/null
+probe_readiness "$CANDIDATE" || fail "canary_network_rebind_readiness_unstable"
+echo "CANARY_NETWORK_REBIND_READY=PASS"
+# Check connectivity to Hub after the dry-run (no login or side effects).
+docker exec "$CANDIDATE" wget -qO-   'http://v79-hub:3040/.well-known/jwks.json'   </dev/null >/dev/null 2>&1 || fail "canary_hub_unreachable_after_network_rebind"
+
 # Atomic operational handoff: no Compose changes, no DB/worker/Hub restarts.
 PROMOTION_STARTED=1
 echo "POS_TEAM_UI_API_ONLY_PROMOTION=STARTING"
@@ -231,7 +264,11 @@ docker network disconnect "$INTERNAL" "$LIVE" </dev/null
 docker network connect --alias v79-pos --alias api "$INTERNAL" "$LIVE" </dev/null
 docker update --restart unless-stopped "$LIVE" </dev/null >/dev/null
 
-wait_ready "$LIVE" || fail "promoted_api_not_healthy"
+# A prior attempt failed a single /ready request immediately after reconnect:
+# do not mistake a stale Docker healthy state for fresh application readiness.
+probe_readiness "$LIVE" || fail "promoted_api_http_readiness_not_recovered"
+[[ "$(docker inspect "$LIVE" --format '{{.State.Health.Status}}')" == healthy ]] ||
+ fail "promoted_api_docker_health_not_recovered"
 [[ "$(docker inspect "$LIVE" --format '{{.Image}}')" == "$FIX_ID" ]] ||
   fail "new_api_image_identity_mismatch"
 for path in ready app.js technician reports-ui.js favicon.svg; do
