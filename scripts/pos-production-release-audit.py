@@ -48,10 +48,26 @@ def main():
     hub = inspect("v79-hub")
     stage_hub = inspect("v79-hub-pos-hubqa")
 
-    require(all(c["State"].get("Health", {}).get("Status") == "healthy"
-                for c in (prod, prod_db, prod_redis, stage, stage_db,
-                          stage_redis, hub, stage_hub)),
-            "EXISTING_EIGHT_CONTAINERS_HEALTHY")
+    checks = (
+        ("v79-pos", prod), ("v79-pos-db", prod_db),
+        ("v79-pos-redis", prod_redis), ("v79-pos-hubqa-api", stage),
+        ("v79-pos-hubqa-db", stage_db),
+        ("v79-pos-hubqa-redis", stage_redis),
+        ("v79-hub", hub), ("v79-hub-pos-hubqa", stage_hub)
+    )
+    all_healthy = True
+    for name, container in checks:
+        state = container["State"]
+        status = state.get("Health", {}).get("Status", "not-configured")
+        running = state.get("Running") is True
+        print("CONTAINER_STATUS=" + name +
+              " RUNNING=" + ("yes" if running else "no") +
+              " HEALTH=" + status +
+              " RESTARTS=" + str(container.get("RestartCount", 0)),
+              flush=True)
+        if not running or status != "healthy":
+            all_healthy = False
+    require(all_healthy, "EXISTING_EIGHT_CONTAINERS_HEALTHY")
     require(prod["Config"]["Image"] == PROD_TAG and prod["Image"] == PROD_ID
             and inspect(PROD_TAG, "image")["Id"] == PROD_ID,
             "LIVE_ROLLBACK_IMAGE_PINNED")
