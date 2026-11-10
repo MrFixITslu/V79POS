@@ -25,6 +25,7 @@ jobs:
       - run: bash -n scripts/pos-offhost-precutover-backup.sh scripts/pos-production-api-cutover-20261109.sh scripts/pos-production-api-resume-20261109.sh scripts/pos-production-direct-promotion-20261110.sh
       - run: node scripts/backup-restore-safety.test.mjs
       - run: node scripts/brand-regression.test.mjs
+      - run: node scripts/pos-team-tech-ui-regression.test.mjs
       - run: pnpm build
       - run: pnpm test
       - run: pnpm lint
