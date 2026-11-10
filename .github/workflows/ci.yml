@@ -22,7 +22,7 @@ jobs:
       - run: node --check apps/api/public/app.js
       - run: node --check apps/api/public/reports-ui.js
       - run: node --check apps/api/public/technician.js
-      - run: bash -n scripts/pos-offhost-precutover-backup.sh scripts/pos-production-api-cutover-20261109.sh scripts/pos-production-api-resume-20261109.sh
+      - run: bash -n scripts/pos-offhost-precutover-backup.sh scripts/pos-production-api-cutover-20261109.sh scripts/pos-production-api-resume-20261109.sh scripts/pos-production-direct-promotion-20261110.sh
       - run: node scripts/backup-restore-safety.test.mjs
       - run: node scripts/brand-regression.test.mjs
       - run: pnpm build
