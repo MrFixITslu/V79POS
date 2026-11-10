@@ -7,12 +7,16 @@ import { writeAudit } from '../../lib/audit.js';
 import { emitEvent } from '../../lib/outbox.js';
 import { assertLocationAccess, requirePermission } from '../auth/context.js';
 import { availableFromBalance, postInventoryMovement } from './service.js';
+import { conflict, notFound, forbidden } from '../../lib/errors.js';
+
+const stockQty = z.coerce.number().finite().min(0.0001).max(1000000000)
+  .refine(value => Number(value.toFixed(4)) === value, 'Use at most four decimal places');
 
 const adjustmentSchema = z.object({
   locationId: z.string().min(1),
   productVariantId: z.string().min(1),
   type: z.enum(['ADJUSTMENT_GAIN', 'ADJUSTMENT_LOSS', 'DAMAGE', 'EXPIRY', 'QUARANTINE_IN', 'QUARANTINE_RELEASE']),
-  quantity: z.coerce.number().positive(),
+  quantity: stockQty,
   reason: z.string().min(3).max(500)
 });
 
@@ -24,6 +28,28 @@ export async function inventoryRoutes(app: FastifyInstance) {
       orderBy: { name: 'asc' }
     })
   }));
+  // The warehouse catalogue is tenant-scoped and restricted to owners/admins.
+  // Technician MOBILE locations can only be provisioned by the custody workflow.
+  app.post('/v1/locations', { preHandler: requirePermission('team.write') }, async request => {
+    if (!['OWNER','ADMIN'].includes(request.auth.roleKey)) throw forbidden('Only owners or administrators can add locations');
+    const body = z.object({
+      name: z.string().trim().min(2).max(120),
+      code: z.string().trim().min(2).max(24).regex(/^[a-zA-Z0-9_-]+$/),
+      type: z.enum(['WAREHOUSE','STORE','OFFICE']),
+      address: z.string().trim().max(300).optional()
+    }).parse(request.body);
+    return serializable(async tx => {
+      const location = await tx.location.create({ data: {
+        tenantId: request.auth.tenantId, name: body.name, code: body.code.toUpperCase(),
+        type: body.type, ...(body.address ? { address: { text: body.address } } : {})
+      } });
+      await writeAudit(tx, { tenantId: request.auth.tenantId, actorUserId: request.auth.userId,
+        action: 'inventory.location_created', resourceType: 'Location', resourceId: location.id,
+        after: { name: location.name, code: location.code, type: location.type } });
+      return { id: location.id, name: location.name, code: location.code, type: location.type };
+    });
+  });
+
   app.get('/v1/inventory', { preHandler: requirePermission('inventory.read') }, async request => {
     const query = z.object({ locationId: z.string().optional() }).parse(request.query);
     if (query.locationId) assertLocationAccess(request, query.locationId);
@@ -57,6 +83,15 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const body = adjustmentSchema.parse(request.body);
     assertLocationAccess(request, body.locationId);
     return serializable(async tx => {
+      const variant = await tx.productVariant.findFirst({
+        where: { tenantId: request.auth.tenantId, id: body.productVariantId },
+        select: { requiresExpiry: true, product: { select: { productType: true } } }
+      });
+      if (!variant) throw notFound('Product was not found');
+      if (variant.product.productType === 'SERIALIZED' ||
+          variant.product.productType === 'LOT_TRACKED' || variant.requiresExpiry) {
+        throw conflict('Tracked hardware requires a serial/lot-aware stock adjustment. Use controlled receiving or transfers.');
+      }
       const movement = await postInventoryMovement(tx, {
         tenantId: request.auth.tenantId, locationId: body.locationId, productVariantId: body.productVariantId,
         movementType: InventoryMovementType[body.type], quantity: body.quantity, referenceType: 'MANUAL_ADJUSTMENT',

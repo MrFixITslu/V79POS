@@ -60,6 +60,7 @@ function balanceChange(type: InventoryMovementType, qty: Prisma.Decimal) {
       break;
     case InventoryMovementType.SALE:
     case InventoryMovementType.TRANSFER_OUT:
+    case InventoryMovementType.TECHNICIAN_USE:
     case InventoryMovementType.ADJUSTMENT_LOSS:
       result.onHand = qty.negated();
       break;
@@ -88,6 +89,7 @@ function balanceChange(type: InventoryMovementType, qty: Prisma.Decimal) {
 function requiresSellable(type: InventoryMovementType) {
   const sellableMovements: InventoryMovementType[] = [
     InventoryMovementType.SALE,
+    InventoryMovementType.TECHNICIAN_USE,
     InventoryMovementType.TRANSFER_OUT,
     InventoryMovementType.ADJUSTMENT_LOSS,
     InventoryMovementType.DAMAGE,

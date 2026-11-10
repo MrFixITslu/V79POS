@@ -28,19 +28,36 @@ export async function teamRoutes(app: FastifyInstance) {
         active: true,
         ...(request.auth.allLocations ? {} : { locationAccess: { some: { locationId: { in: [...request.auth.locationIds] } } } })
       },
-      include: { role: true, locationAccess: { include: { location: true } } },
+      include: { role: true, profile: { select: { displayName: true, employeeCode: true } },
+        locationAccess: { include: { location: true } } },
       orderBy: { createdAt: 'asc' }
     }) };
   });
 
   app.post('/v1/team', { preHandler: requirePermission('team.write') }, async request => {
     const body = membershipSchema.parse(request.body);
+    // Existing tenants may predate the new built-in technician role.
+    if (body.roleKey === 'TECHNICIAN' && ['OWNER', 'ADMIN', 'MANAGER'].includes(request.auth.roleKey)) {
+      await prisma.tenantRole.upsert({
+        where: { tenantId_key: { tenantId: request.auth.tenantId, key: 'TECHNICIAN' } },
+        create: { tenantId: request.auth.tenantId, key: 'TECHNICIAN', name: 'Technician', builtIn: true },
+        update: {}
+      });
+    }
     const role = await prisma.tenantRole.findUnique({ where: { tenantId_key: { tenantId: request.auth.tenantId, key: body.roleKey } } });
     if (!role) throw notFound('Role not found');
+    const targetMembership = await prisma.membership.findUnique({
+      where: { tenantId_userId: { tenantId: request.auth.tenantId, userId: body.userId } },
+      select: { roleKey: true, active: true }
+    });
+    if (targetMembership?.active && ['OWNER', 'ADMIN'].includes(targetMembership.roleKey) &&
+        request.auth.roleKey !== 'OWNER') {
+      throw conflict('Only the owner can change an existing owner or administrator');
+    }
     if (body.userId === request.auth.userId && request.auth.roleKey !== 'OWNER') throw conflict('You cannot change your own POS role or location access');
     if (['OWNER', 'ADMIN'].includes(body.roleKey) && request.auth.roleKey !== 'OWNER') throw conflict('Only an owner can assign owner or admin roles');
     if (!request.auth.allLocations && body.locationIds.some(locationId => !request.auth.locationIds.has(locationId))) throw conflict('You cannot assign access outside your own locations');
-    if (request.auth.roleKey === 'MANAGER' && !['MANAGER','SUPERVISOR','CASHIER','INVENTORY','PURCHASING','DELIVERY'].includes(body.roleKey)) throw conflict('Managers cannot assign finance, audit, admin or owner roles');
+    if (request.auth.roleKey === 'MANAGER' && !['MANAGER','SUPERVISOR','CASHIER','INVENTORY','PURCHASING','DELIVERY','TECHNICIAN'].includes(body.roleKey)) throw conflict('Managers cannot assign finance, audit, admin or owner roles');
     const locations = await prisma.location.findMany({ where: { tenantId: request.auth.tenantId, id: { in: body.locationIds }, active: true }, select: { id: true } });
     if (locations.length !== new Set(body.locationIds).size) throw notFound('One or more locations were not found');
 
