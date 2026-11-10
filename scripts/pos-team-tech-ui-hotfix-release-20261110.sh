@@ -139,7 +139,8 @@ trap rollback EXIT
 # Build an offline image using the exact currently deployed image as the
 # only parent and the single, reviewed app.js from this Git SHA.
 git -C "$SRC" show "$REV:apps/api/public/app.js" > "$WORK/app.js"
-node --check "$WORK/app.js" || fail "ui_javascript_syntax_invalid"
+docker run --rm -i --pull never --network none --entrypoint node \
+ "$BASE_TAG" --check - < "$WORK/app.js" || fail "ui_javascript_syntax_invalid"
 grep -q 'Technician Inventory' "$WORK/app.js" || fail "technician_navigation_missing"
 grep -q 'Team response is invalid' "$WORK/app.js" || fail "team_contract_fix_missing"
 cat > "$WORK/Dockerfile" <<'EOF'
