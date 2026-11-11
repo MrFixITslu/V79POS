@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { verifyPlatformSignature } from '../../lib/platform-signature.js';
+import { validJobCostScope, summariseProvisionalJobCost } from './job-cost-evidence.js';
 import { builtInRoleKeys } from '../auth/context.js';
 import { canHubDeactivatePosRole, defaultHubTeamLocationCode, hubTeamRoles, posRoleForHubTeamRole } from './team-provisioning.js';
 
@@ -145,6 +146,40 @@ export async function platformRoutes(app: FastifyInstance) {
       alreadyInactive: !membership.active
     };
   });
+
+  // Dedicated Hub-signed read-only cost evidence; a staff-entered ticket
+  // reference is provisional until linked to a verified Tiquet job.
+  app.get<{ Params:{organizationId:string;jobId:string} }>(
+    '/api/platform/job-cost-evidence/:organizationId/:jobId',
+    async (request,reply)=>{
+      reply.header('cache-control','no-store');
+      if(process.env.V79_ECOSYSTEM_V2_JOB_COST_READ_ENABLED!=='1')
+        return reply.code(404).send({error:'Not available'});
+      const {organizationId,jobId}=request.params;
+      if(!validJobCostScope(organizationId,jobId))
+        return reply.code(400).send({error:'Invalid job cost scope'});
+      const tenant=await prisma.tenant.findUnique({
+        where:{id:organizationId},select:{id:true,active:true,currency:true}
+      });
+      if(!tenant?.active)
+        return reply.code(404).send({error:'Workspace unavailable'});
+      const rows=await prisma.technicianUsage.findMany({
+        where:{tenantId:organizationId,jobReference:jobId},
+        select:{id:true,quantity:true,unitCost:true,createdAt:true},
+        orderBy:[{createdAt:'asc'},{id:'asc'}],take:2001
+      });
+      if(rows.length>2000)
+        return reply.code(409).send({
+          error:'Cost set exceeds safe result limits; no partial total is reported'
+        });
+      try {
+        return summariseProvisionalJobCost(
+          organizationId,jobId,tenant.currency,rows);
+      }catch{
+        return reply.code(409).send({error:'POS cost evidence could not be reconciled'});
+      }
+    }
+  );
 
   app.get<{ Params: { organizationId: string } }>('/api/platform/summary/:organizationId', async (request, reply) => {
     const tenant = await prisma.tenant.findUnique({
