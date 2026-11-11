@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { verifyPlatformSignature } from '../../lib/platform-signature.js';
+import { validJobCostScope, summariseProvisionalJobCost } from './job-cost-evidence.js';
 import { builtInRoleKeys } from '../auth/context.js';
 import { canHubDeactivatePosRole, defaultHubTeamLocationCode, hubTeamRoles, posRoleForHubTeamRole } from './team-provisioning.js';
 
@@ -74,18 +75,32 @@ export async function platformRoutes(app: FastifyInstance) {
       });
       if (!mainLocation?.active) return null;
 
+      const previous = await tx.membership.findUnique({
+        where: { tenantId_userId: { tenantId: organizationId, userId: user.id } }
+      });
+      // A routine Hub "staff" sync must not replace a specifically assigned
+      // technician role or restore general MAIN stock visibility.
+      // Hub role changes to manager/viewer and deprovision events still take effect.
+      const keepTechnician = role === 'staff' && previous?.active && previous.roleKey === 'TECHNICIAN';
+      const effectiveRoleKey = keepTechnician ? 'TECHNICIAN' : roleKey;
       const membership = await tx.membership.upsert({
         where: { tenantId_userId: { tenantId: organizationId, userId: user.id } },
-        create: { tenantId: organizationId, userId: user.id, roleKey },
-        update: { roleKey, active: true }
+        create: { tenantId: organizationId, userId: user.id, roleKey: effectiveRoleKey },
+        update: { roleKey: effectiveRoleKey, active: true }
       });
 
-      await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
-      await tx.userLocationAccess.create({
-        data: { membershipId: membership.id, locationId: mainLocation.id }
-      });
+      if (!keepTechnician) {
+        await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
+        await tx.userLocationAccess.create({
+          data: { membershipId: membership.id, locationId: mainLocation.id }
+        });
+      }
 
-      return { membershipId: membership.id, locationId: mainLocation.id };
+      const assigned = keepTechnician ? await tx.userLocationAccess.findMany({
+        where: { membershipId: membership.id, location: { active: true, type: 'MOBILE', custodianUserId: user.id } },
+        select: { locationId: true }
+      }) : [{ locationId: mainLocation.id }];
+      return { membershipId: membership.id, locationIds: assigned.map(x => x.locationId), roleKey: effectiveRoleKey };
     });
 
     if (!provisioned) {
@@ -96,8 +111,8 @@ export async function platformRoutes(app: FastifyInstance) {
       provisioned: true,
       organizationId,
       userId: user.id,
-      roleKey,
-      locationIds: [provisioned.locationId]
+      roleKey: provisioned.roleKey,
+      locationIds: provisioned.locationIds
     };
   });
 
@@ -131,6 +146,40 @@ export async function platformRoutes(app: FastifyInstance) {
       alreadyInactive: !membership.active
     };
   });
+
+  // Dedicated Hub-signed read-only cost evidence; a staff-entered ticket
+  // reference is provisional until linked to a verified Tiquet job.
+  app.get<{ Params:{organizationId:string;jobId:string} }>(
+    '/api/platform/job-cost-evidence/:organizationId/:jobId',
+    async (request,reply)=>{
+      reply.header('cache-control','no-store');
+      if(process.env.V79_ECOSYSTEM_V2_JOB_COST_READ_ENABLED!=='1')
+        return reply.code(404).send({error:'Not available'});
+      const {organizationId,jobId}=request.params;
+      if(!validJobCostScope(organizationId,jobId))
+        return reply.code(400).send({error:'Invalid job cost scope'});
+      const tenant=await prisma.tenant.findUnique({
+        where:{id:organizationId},select:{id:true,active:true,currency:true}
+      });
+      if(!tenant?.active)
+        return reply.code(404).send({error:'Workspace unavailable'});
+      const rows=await prisma.technicianUsage.findMany({
+        where:{tenantId:organizationId,jobReference:jobId},
+        select:{id:true,quantity:true,unitCost:true,createdAt:true},
+        orderBy:[{createdAt:'asc'},{id:'asc'}],take:2001
+      });
+      if(rows.length>2000)
+        return reply.code(409).send({
+          error:'Cost set exceeds safe result limits; no partial total is reported'
+        });
+      try {
+        return summariseProvisionalJobCost(
+          organizationId,jobId,tenant.currency,rows);
+      }catch{
+        return reply.code(409).send({error:'POS cost evidence could not be reconciled'});
+      }
+    }
+  );
 
   app.get<{ Params: { organizationId: string } }>('/api/platform/summary/:organizationId', async (request, reply) => {
     const tenant = await prisma.tenant.findUnique({

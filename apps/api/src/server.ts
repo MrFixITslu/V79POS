@@ -14,6 +14,7 @@ import { issuePosSession, registerAuth, verifyHubAccessToken } from './modules/a
 import { catalogueRoutes } from './modules/catalogue/routes.js';
 import { inventoryRoutes } from './modules/inventory/routes.js';
 import { transferRoutes } from './modules/inventory/transfers.js';
+import { technicianRoutes } from './modules/technician/routes.js';
 import { salesRoutes } from './modules/sales/routes.js';
 import { procurementRoutes } from './modules/procurement/routes.js';
 import { replenishmentRoutes } from './modules/replenishment/routes.js';
@@ -29,6 +30,7 @@ import { paymentRoutes } from './modules/payments/routes.js';
 import { syncRoutes } from './modules/sync/routes.js';
 import { integrationRoutes } from './modules/integrations/routes.js';
 import { reportRoutes } from './modules/reports/routes.js';
+import { trendRoutes } from './modules/reports/trends.js';
 import { auditRoutes } from './modules/audit/routes.js';
 import { orderRoutes } from './modules/orders/routes.js';
 import { fulfillmentRoutes } from './modules/fulfillment/routes.js';
@@ -53,12 +55,43 @@ for (const [route, filename, mime] of [
   ['/', 'index.html', 'text/html; charset=utf-8'],
   ['/app.css', 'app.css', 'text/css; charset=utf-8'],
   ['/app.js', 'app.js', 'text/javascript; charset=utf-8'],
+  ['/reports-ui.js', 'reports-ui.js', 'text/javascript; charset=utf-8'],
+  ['/technician', 'technician.html', 'text/html; charset=utf-8'],
+  ['/technician.js', 'technician.js', 'text/javascript; charset=utf-8'],
+  ['/technician.css', 'technician.css', 'text/css; charset=utf-8'],
+  ['/brand-site.webmanifest', 'brand-site.webmanifest', 'application/manifest+json'],
+  ['/pos-icon.svg', 'pos-icon.svg', 'image/svg+xml'],
+  ['/pos-logo.svg', 'pos-logo.svg', 'image/svg+xml'],
   ['/favicon.svg', 'favicon.svg', 'image/svg+xml']
 ] as const) {
   app.get(route, async (_request, reply) => {
     reply.header('content-type', mime);
     reply.header('cache-control', 'no-store');
     return readFile(join(publicRoot, filename));
+  });
+}
+
+const brandAssets = [
+  'android-chrome-192.png',
+  'android-chrome-512.png',
+  'apple-touch-icon.png',
+  'favicon-16.png',
+  'favicon-32.png',
+  'favicon-48.png',
+  'favicon.ico',
+  'header-dark.png',
+  'header-light.png',
+  'icon-256.png',
+  'icon-64.png',
+  'icon-transparent-256.png',
+  'icon-transparent-512.png',
+  'logo-full.png',
+] as const;
+for (const name of brandAssets) {
+  app.get('/brand/' + name, async (_request, reply) => {
+    reply.header('content-type', name.endsWith('.ico') ? 'image/x-icon' : 'image/png');
+    reply.header('cache-control', 'public, max-age=3600');
+    return readFile(join(publicRoot, 'brand', name));
   });
 }
 
@@ -139,10 +172,12 @@ await paymentRoutes(app);
 await syncRoutes(app);
 await integrationRoutes(app);
 await reportRoutes(app);
+await trendRoutes(app);
 await auditRoutes(app);
 await inventoryRoutes(app);
 await stockCountRoutes(app);
 await transferRoutes(app);
+await technicianRoutes(app);
 await registerRoutes(app);
 await salesRoutes(app);
 await orderRoutes(app);
@@ -177,4 +212,8 @@ const close = async () => {
 process.on('SIGTERM', close);
 process.on('SIGINT', close);
 
-await app.listen({ port: config.PORT, host: '0.0.0.0' });
+// Disposable integration tests may opt into a loopback-only dev listener.
+// Production remains unchanged and does not honour the test-only flag.
+const listenHost = config.NODE_ENV !== 'production' && process.env.POS_DEV_LOOPBACK_ONLY === '1'
+  ? '127.0.0.1' : '0.0.0.0';
+await app.listen({ port: config.PORT, host: listenHost });
