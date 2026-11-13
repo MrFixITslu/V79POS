@@ -160,7 +160,7 @@ export async function salesRoutes(app: FastifyInstance) {
         } else if (input.serialNumberIds.length) throw conflict('Serial numbers supplied for a non-serialized product');
         if (variant.product.productType === 'LOT_TRACKED' || variant.requiresExpiry) {
           const allocated=input.lotAllocations.reduce((a,l)=>a+l.quantity,0); if(Math.abs(allocated-input.quantity)>0.0001) throw conflict('Lot allocation must equal sale quantity');
-          for (const a of input.lotAllocations) { const lot=lotMap.get(a.lotId); if(!lot||lot.productVariantId!==variant.id||lot.quantityOnHand.lt(a.quantity)) throw conflict('Lot is unavailable or has insufficient quantity'); if(lot.expiryDate && lot.expiryDate < effectiveAt!) throw conflict('Expired lot cannot be sold'); }
+          for (const a of input.lotAllocations) { const lot=lotMap.get(a.lotId); if(!lot||lot.productVariantId!==variant.id||lot.quantityOnHand.minus(lot.quantityQuarantined).lt(a.quantity)) throw conflict('Lot is unavailable or has insufficient quantity'); if(lot.expiryDate && lot.expiryDate < effectiveAt!) throw conflict('Expired lot cannot be sold'); }
         } else if (input.lotAllocations.length) throw conflict('Lot allocations supplied for a non-lot product');
       }
 

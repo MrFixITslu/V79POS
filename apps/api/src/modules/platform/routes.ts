@@ -5,6 +5,7 @@ import { prisma } from '../../lib/prisma.js';
 import { config } from '../../lib/config.js';
 import { verifyPlatformSignature } from '../../lib/platform-signature.js';
 import { builtInRoleKeys } from '../auth/context.js';
+import { applyHubOrgNameSync, hubOrgNameSchema, HubOrgNameConflict } from './organization-name-sync.js';
 import { canHubDeactivatePosRole, defaultHubTeamLocationCode, hubTeamRoles, posRoleForHubTeamRole } from './team-provisioning.js';
 
 const provisionSchema = z.object({
@@ -35,12 +36,45 @@ export async function platformRoutes(app: FastifyInstance) {
     })) return reply.code(401).send({ error: 'Invalid V79 platform signature.' });
   });
 
+  // HMAC authentication is enforced by the existing platform preHandler.
+  app.post('/api/platform/organization/name/sync', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const body = hubOrgNameSchema.parse(request.body);
+    try {
+      // Acknowledgement is returned only after the transaction commits.
+      await prisma.$transaction(tx => applyHubOrgNameSync(tx, body));
+    } catch (error) {
+      if (error instanceof HubOrgNameConflict) {
+        return reply.code(409).send({ error: 'Organisation name sync conflict' });
+      }
+      throw error;
+    }
+    return {
+      accepted: true, eventId: body.eventId, organizationId: body.organizationId,
+      destination: body.destination, name: body.name, nameRevision: body.nameRevision,
+    };
+  });
+
   app.post('/api/platform/provision', async request => {
     const { organization, user } = provisionSchema.parse(request.body);
     await prisma.$transaction(async tx => {
-      const existing = await tx.tenant.findUnique({ where: { id: organization.id } });
+      // Lock first: provisioning and name-sync use the same row-level fence.
+      const locked = await tx.$queryRaw<Array<{ id: string; slug: string }>>`
+        SELECT "id", "slug" FROM "Tenant" WHERE "id" = ${organization.id} FOR UPDATE
+      `;
+      const existing = locked[0];
       if (existing && existing.slug !== organization.slug) throw new Error('Hub organisation slug mismatch');
-      await tx.tenant.upsert({ where: { id: organization.id }, create: { id: organization.id, name: organization.name, slug: organization.slug, currency: 'XCD', timezone: 'America/St_Lucia' }, update: { name: organization.name } });
+      if (!existing) {
+        await tx.tenant.create({ data: { id: organization.id, name: organization.name, slug: organization.slug, currency: 'XCD', timezone: 'America/St_Lucia' } });
+      } else {
+        const synced = await tx.$queryRaw<Array<{ organization_id: string }>>`
+          SELECT "organization_id" FROM "hub_org_name_state" WHERE "organization_id" = ${organization.id}
+        `;
+        // Provisioning is not a name-change event. Do not reverse a newer Hub rename.
+        if (!synced.length) {
+          await tx.tenant.update({ where: { id: organization.id }, data: { name: organization.name } });
+        }
+      }
       for (const key of builtInRoleKeys()) {
         await tx.tenantRole.upsert({ where: { tenantId_key: { tenantId: organization.id, key } }, create: { tenantId: organization.id, key, name: key[0] + key.slice(1).toLowerCase(), builtIn: true }, update: {} });
       }
@@ -74,18 +108,32 @@ export async function platformRoutes(app: FastifyInstance) {
       });
       if (!mainLocation?.active) return null;
 
+      const previous = await tx.membership.findUnique({
+        where: { tenantId_userId: { tenantId: organizationId, userId: user.id } }
+      });
+      // A routine Hub "staff" sync must not replace a specifically assigned
+      // technician role or restore general MAIN stock visibility.
+      // Hub role changes to manager/viewer and deprovision events still take effect.
+      const keepTechnician = role === 'staff' && previous?.active && previous.roleKey === 'TECHNICIAN';
+      const effectiveRoleKey = keepTechnician ? 'TECHNICIAN' : roleKey;
       const membership = await tx.membership.upsert({
         where: { tenantId_userId: { tenantId: organizationId, userId: user.id } },
-        create: { tenantId: organizationId, userId: user.id, roleKey },
-        update: { roleKey, active: true }
+        create: { tenantId: organizationId, userId: user.id, roleKey: effectiveRoleKey },
+        update: { roleKey: effectiveRoleKey, active: true }
       });
 
-      await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
-      await tx.userLocationAccess.create({
-        data: { membershipId: membership.id, locationId: mainLocation.id }
-      });
+      if (!keepTechnician) {
+        await tx.userLocationAccess.deleteMany({ where: { membershipId: membership.id } });
+        await tx.userLocationAccess.create({
+          data: { membershipId: membership.id, locationId: mainLocation.id }
+        });
+      }
 
-      return { membershipId: membership.id, locationId: mainLocation.id };
+      const assigned = keepTechnician ? await tx.userLocationAccess.findMany({
+        where: { membershipId: membership.id, location: { active: true, type: 'MOBILE', custodianUserId: user.id } },
+        select: { locationId: true }
+      }) : [{ locationId: mainLocation.id }];
+      return { membershipId: membership.id, locationIds: assigned.map(x => x.locationId), roleKey: effectiveRoleKey };
     });
 
     if (!provisioned) {
@@ -96,8 +144,8 @@ export async function platformRoutes(app: FastifyInstance) {
       provisioned: true,
       organizationId,
       userId: user.id,
-      roleKey,
-      locationIds: [provisioned.locationId]
+      roleKey: provisioned.roleKey,
+      locationIds: provisioned.locationIds
     };
   });
 

@@ -28,6 +28,7 @@ enum ProductType {
 enum InventoryMovementType {
   PURCHASE_RECEIPT
   SALE
+  TECHNICIAN_USE
   SALE_RETURN
   TRANSFER_OUT
   TRANSFER_IN
@@ -63,6 +64,12 @@ enum StockTransferStatus {
   IN_TRANSIT
   RECEIVED
   CANCELLED
+}
+enum StockTransferPurpose {
+  GENERAL
+  TECHNICIAN_ISSUE
+  TECHNICIAN_RETURN_GOOD
+  TECHNICIAN_RETURN_FAULTY
 }
 enum PaymentStatus {
   PENDING
@@ -190,6 +197,7 @@ enum SerialStatus {
   IN_TRANSIT
   DAMAGED
   RETIRED
+  INSTALLED
 }
 enum FulfillmentMethod {
   PICKUP
@@ -224,6 +232,8 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  hubOrgNameState HubOrgNameState?
+  hubOrgNameReceipts HubOrgNameReceipt[]
   locations     Location[]
   products      Product[]
   suppliers     Supplier[]
@@ -318,6 +328,7 @@ model Location {
   name      String
   code      String
   type      LocationType
+  custodianUserId String?
   active    Boolean      @default(true)
   address   Json?
   createdAt DateTime     @default(now())
@@ -345,6 +356,7 @@ model Location {
   transfersIn      StockTransfer[] @relation("TransferTo")
 
   @@unique([tenantId, code])
+  @@unique([tenantId, custodianUserId])
   @@index([tenantId, active])
 }
 
@@ -716,6 +728,10 @@ model StockTransfer {
   number         String
   fromLocationId String
   toLocationId   String
+  purpose        StockTransferPurpose @default(GENERAL)
+  technicianUserId String?
+  jobReference String?
+  requestKey String?
   status         StockTransferStatus @default(REQUESTED)
   notes          String?
   createdBy      String
@@ -732,6 +748,7 @@ model StockTransfer {
   lines        StockTransferLine[]
 
   @@unique([tenantId, number])
+  @@unique([tenantId, requestKey])
   @@index([tenantId, status, createdAt])
 }
 
@@ -1137,6 +1154,7 @@ model InventoryLot {
   lotNumber        String
   expiryDate       DateTime?
   quantityOnHand   Decimal  @db.Decimal(18,4)
+  quantityQuarantined Decimal @default(0) @db.Decimal(18,4)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -1753,4 +1771,46 @@ model OutboxEvent {
 
   @@index([publishedAt, createdAt])
   @@index([tenantId, eventType, createdAt])
+}
+
+
+// Idempotent technician consumption record. Location is the technician's MOBILE stock custody.
+model TechnicianUsage {
+  id               String   @id @default(cuid())
+  tenantId         String
+  technicianUserId String
+  locationId       String
+  productVariantId String
+  quantity         Decimal  @db.Decimal(18,4)
+  jobReference     String
+  requestKey       String
+  unitCost         Decimal  @db.Decimal(18,4)
+  serialNumberIds  Json?
+  lotAllocations   Json?
+  createdAt        DateTime @default(now())
+
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, technicianUserId, createdAt])
+  @@index([tenantId, locationId, productVariantId])
+}
+
+// Revision fence: ordinary provisioning must not overwrite a Hub-synchronised name.
+model HubOrgNameState {
+  organizationId String @id @map("organization_id")
+  nameRevision BigInt @map("name_revision")
+  name String
+  tenant Tenant @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@map("hub_org_name_state")
+}
+
+// Durable idempotency: a duplicate event ID must carry exactly the original payload.
+model HubOrgNameReceipt {
+  eventId String @id @map("event_id")
+  organizationId String @map("organization_id")
+  nameRevision BigInt @map("name_revision")
+  name String
+  payloadHash String @map("payload_hash") @db.Char(64)
+  tenant Tenant @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  @@index([organizationId])
+  @@map("hub_org_name_receipts")
 }

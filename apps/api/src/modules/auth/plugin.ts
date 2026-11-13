@@ -75,7 +75,7 @@ export async function registerAuth(app: FastifyInstance) {
   app.decorateRequest('auth', undefined as unknown as AuthContext);
 
   app.addHook('onRequest', async request => {
-    if (request.url === '/' || request.url === '/favicon.svg' || request.url === '/app.js' || request.url === '/app.css' || request.url === '/health' || request.url === '/ready' || request.url === '/auth/launch' || request.url === '/auth/exchange' || request.url === '/auth/logout' || request.url.startsWith('/v1/payments/webhooks/') || request.url.startsWith('/api/platform/')) return;
+    if (request.url === '/' || request.url.startsWith('/brand/') || request.url === '/brand-site.webmanifest' || request.url === '/pos-icon.svg' || request.url === '/pos-logo.svg' || request.url === '/favicon.svg' || request.url === '/app.js' || request.url === '/reports-ui.js' || request.url === '/app.css' || request.url === '/technician' || request.url === '/technician.js' || request.url === '/technician.css' || request.url === '/health' || request.url === '/ready' || request.url === '/auth/launch' || request.url === '/auth/exchange' || request.url === '/auth/logout' || request.url.startsWith('/v1/payments/webhooks/') || request.url.startsWith('/api/platform/')) return;
 
     if (!request.headers.authorization && !['GET','HEAD','OPTIONS'].includes(request.method) && request.headers.origin !== new URL(config.POS_PUBLIC_URL).origin) {
       throw unauthorized('Invalid request origin');
@@ -118,6 +118,16 @@ export async function registerAuth(app: FastifyInstance) {
       ...builtInPermissions(membership.roleKey),
       ...membership.role.permissions.map(p => p.permission)
     ]);
+    // A technician can never inherit stock access to MAIN or another person's MOBILE
+    // location, even when a Hub team sync previously assigned the shared store.
+    const technicianLocationIds = membership.roleKey === 'TECHNICIAN'
+      ? new Set((await prisma.location.findMany({
+          where: { tenantId, active: true, type: 'MOBILE',
+            custodianUserId: identity.userId,
+            id: { in: membership.locationAccess.map(item => item.locationId) } },
+          select: { id: true }
+        })).map(location => location.id))
+      : null;
     const allLocations = membership.roleKey === 'OWNER' || membership.roleKey === 'ADMIN';
     const auth: AuthContext = {
       userId: identity.userId,
@@ -125,7 +135,7 @@ export async function registerAuth(app: FastifyInstance) {
       membershipId: membership.id,
       roleKey: membership.roleKey,
       permissions,
-      locationIds: new Set(membership.locationAccess.map(item => item.locationId)),
+      locationIds: technicianLocationIds ?? new Set(membership.locationAccess.map(item => item.locationId)),
       allLocations
     };
     request.auth = auth;
