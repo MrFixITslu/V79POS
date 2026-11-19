@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { issueCashierProof, verifyCashierProof } from './cashier-proof.js';
+
+// Proof signing is a pure unit boundary: never require a database or live key.
+vi.mock('./config.js', () => ({
+  config: { ENCRYPTION_KEY: 'synthetic-cashier-unit-key-at-least-32-characters' }
+}));
 
 describe('cashier proof', () => {
   const identity = {
