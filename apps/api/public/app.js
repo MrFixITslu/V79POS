@@ -1,3 +1,11 @@
+import { renderKpiReports } from './reports-ui.js';
+
+// Apply only an explicit saved preference; new visitors use the shared light theme.
+try {
+  const appearance = localStorage.getItem('v79-pos-theme');
+  if (appearance === 'dark' || appearance === 'light') document.documentElement.dataset.theme = appearance;
+} catch {}
+
 const root = document.querySelector("#app");
 const toastBox = document.querySelector("#toast");
 const h = (value) =>
@@ -26,11 +34,13 @@ const tabs = [
   ["products", "Products", "◇"],
   ["inventory", "Inventory", "▤"],
   ["stock-control", "Stock Control", "⇄"],
+  ["technician-stock", "Technician Inventory", "▤"],
   ["customers", "Customers", "♙"],
   ["sales", "Sales", "◴"],
   ["orders", "Orders", "▧"],
   ["purchasing", "Purchasing", "⌁"],
   ["replenishment", "Replenishment", "↗"],
+  ["reports", "Reports", "▥"],
 ];
 const state = {
   token: "",
@@ -40,15 +50,24 @@ const state = {
   data: {},
   cart: [],
   reference: key(),
+  lastRegisterClose: null,
   selectedRegister: "",
   selectedSale: "",
   selectedReturnLine: "",
   selectedCommerceOrder: "",
   selectedStockCount: "",
   selectedStockCountLine: "",
+  selectedTransfer: "",
+  transferSerials: [],
+  transferLots: [],
+  reportPeriod: "week",
+  reportLocation: "",
+  reportMetric: "netSales",
+  reportError: "",
   search: "",
   demo: false,
   busy: false,
+  loadErrors: {},
 };
 let toastTimer;
 function toast(message, error = false) {
@@ -243,9 +262,46 @@ async function api(path, options = {}) {
   }
   return body;
 }
+function normalizeLoadedData(key, body) {
+  if (key === "dashboard") {
+    const report = body?.dashboard ?? body;
+    if (!report || typeof report !== "object" || Array.isArray(report))
+      throw Error("Dashboard response is invalid. Please refresh.");
+    return report;
+  }
+  // The Team API returns an object with a members array, unlike list endpoints.
+  // Preserve its shape for the stock-custody assignment and management views.
+  if (key === "team") {
+    if (!Array.isArray(body?.members))
+      throw Error("Team response is invalid. Please refresh.");
+    return { members: body.members };
+  }
+  const field = key === "stockCounts" ? "counts" : key;
+  const rows = Array.isArray(body) ? body : (body?.[field] ?? body?.[key]);
+  if (!Array.isArray(rows))
+    throw Error(`${key} response is invalid. Please refresh.`);
+  return rows;
+}
+function registerCloseReconciliation(register) {
+  const result = state.lastRegisterClose;
+  if (!register || register.sessions?.[0] || !result ||
+      result.status !== "CLOSED" || result.registerId !== register.id) return "";
+  const fields = ["expectedCash", "closingCash", "cashVariance"];
+  if (fields.some(key => result[key] === null || result[key] === undefined ||
+      String(result[key]).trim() === "" || !Number.isFinite(Number(result[key]))))
+    return '<div class="notice warn">Register closed. Reconciliation amounts are unavailable.</div>';
+  return `<section class="card section" aria-label="Register reconciliation">
+    <h2>Register reconciliation</h2>
+    <div class="row"><span>Expected cash</span><strong>${cash(result.expectedCash)}</strong></div>
+    <div class="row"><span>Counted cash</span><strong>${cash(result.closingCash)}</strong></div>
+    <div class="row"><span>Variance</span><strong>${cash(result.cashVariance)}</strong></div>
+    <p class="footnote">Variance is counted cash minus expected cash. These amounts are from the closed register session.</p>
+  </section>`;
+}
 async function load() {
   if (state.demo) {
     state.data = demoData();
+    state.loadErrors = {};
     state.selectedRegister = "reg1";
     return;
   }
@@ -254,6 +310,7 @@ async function load() {
     ["registers", "/v1/registers", "register.read"],
     ["inventory", "/v1/inventory", "inventory.read"],
     ["locations", "/v1/locations", "inventory.read"],
+    ["team", "/v1/team", "team.read"],
     ["transfers", "/v1/transfers", "inventory.read"],
     ["stockCounts", "/v1/stock-counts", "inventory.read"],
     ["customers", "/v1/customers?limit=200", "customers.read"],
@@ -267,20 +324,80 @@ async function load() {
   const results = await Promise.allSettled(
     requests.map(async ([key, path, permission]) => [
       key,
-      can(permission) ? await api(path) : {},
+      can(permission) ? normalizeLoadedData(key, await api(path)) : (key === "dashboard" ? {} : key === "team" ? { members: [] } : []),
     ]),
   );
-  for (const result of results) {
+  state.loadErrors = {};
+  for (const [index, result] of results.entries()) {
     if (result.status === "fulfilled") {
       const [k, value] = result.value;
-      state.data[k] = value[k] ?? value;
-    } else if (state.me) toast(result.reason.message, true);
+      state.data[k] = value;
+    } else {
+      state.loadErrors[requests[index][0]] = true;
+      if (state.me) toast(result.reason.message, true);
+    }
   }
   if (
     !state.selectedRegister ||
     !state.data.registers?.some((r) => r.id === state.selectedRegister)
   )
     state.selectedRegister = state.data.registers?.[0]?.id || "";
+  // Reopen an existing close receipt after refresh without creating a new sale
+  // or closing another register session. Server authorization still applies.
+  const register = currentRegister();
+  if (can("register.read") && register && !register.sessions?.[0] &&
+      state.lastRegisterClose?.registerId !== register.id) {
+    const sale = (state.data.sales || []).find(row =>
+      row.registerId === register.id && row.registerSessionId);
+    if (sale) {
+      try {
+        const receipt = await api(`/v1/register-sessions/${encodeURIComponent(sale.registerSessionId)}/reconciliation`);
+        if (receipt.session?.status === "CLOSED" && receipt.session.registerId === register.id)
+          state.lastRegisterClose = receipt.session;
+      } catch (error) { if (state.me) toast("Register reconciliation is unavailable. Please refresh.", true); }
+    }
+  }
+}
+function reportQueryString() {
+  const query = new URLSearchParams({ period: state.reportPeriod });
+  if (state.reportLocation) query.set("locationId", state.reportLocation);
+  return query.toString();
+}
+async function loadTrends() {
+  if (state.demo || !can("reports.read")) return;
+  state.reportError = "";
+  state.data.trends = null;
+  render();
+  try {
+    state.data.trends = await api("/v1/reports/trends?" + reportQueryString());
+  } catch (error) {
+    state.reportError = error.message;
+    toast("Report could not be loaded: " + error.message, true);
+  }
+  render();
+}
+async function exportTrendsCsv() {
+  if (state.demo) return toast("Connect through Hub to export real business data.", true);
+  const response = await fetch("/v1/reports/trends.csv?" + reportQueryString(), {
+    credentials: "same-origin", cache: "no-store",
+    headers: {
+      ...(state.token ? { Authorization: "Bearer " + state.token } : {}),
+      ...(state.tenant ? { "x-v79-tenant-id": state.tenant } : {})
+    }
+  });
+  if (!response.ok) {
+    const details = await response.json().catch(() => ({}));
+    throw Error(details.message || details.error || "CSV export failed (" + response.status + ")");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "v79-pos-kpis-" + state.reportPeriod + ".csv";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function field(name, label, type = "text", value = "", extra = "") {
   return `<div class="field"><label for="${h(name)}">${h(label)}</label><input id="${h(name)}" name="${h(name)}" type="${h(type)}" value="${h(value)}" ${extra}></div>`;
@@ -289,7 +406,7 @@ function select(name, label, options, blank = "Select…") {
   return `<div class="field"><label for="${h(name)}">${h(label)}</label><select id="${h(name)}" name="${h(name)}" ${name === "customerId" ? "" : "required"}><option value="">${h(blank)}</option>${options.map(([value, text]) => `<option value="${h(value)}">${h(text)}</option>`).join("")}</select></div>`;
 }
 function header(title, description, action = "") {
-  return `<div class="pagehead"><div><div class="eyebrow">V79 DIGITAL POS / ${h(state.page)}</div><h1>${h(title)}</h1><p>${h(description)}</p></div>${action}</div>`;
+  return `<div class="pagehead"><div><div class="eyebrow">VISION79 POS / ${h(tabs.find(([id]) => id === state.page)?.[1] || "Workspace")}</div><h1>${h(title)}</h1><p>${h(description)}</p></div>${action}</div>`;
 }
 function badge(text) {
   let kind = /STOCKED|RISK|FAILED|CANCELLED/.test(text)
@@ -303,12 +420,16 @@ function empty(text) {
   return `<div class="empty">${h(text)}</div>`;
 }
 function table(headers, rows) {
-  return `<div class="table-wrap"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const labelledRows = rows.map(row => {
+    let column = 0;
+    return row.replace(/<td(?=[\s>])/g, () => `<td data-label="${h(headers[column++] || "Details")}"`);
+  });
+  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Records"><table class="table"><thead><tr>${headers.map((x) => `<th>${h(x)}</th>`).join("")}</tr></thead><tbody>${labelledRows.join("")}</tbody></table></div>`;
 }
 function renderConnecting(message) {
   root.innerHTML = `<main id="main" class="pos-connecting" role="status" aria-live="polite" aria-busy="true">
     <div class="pos-connecting-card">
-      <div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>
+      <div class="pos-connecting-brand"><img class="pos-connecting-icon" src="/brand/icon-64.png" alt="" width="42" height="42"><strong>Vision79 POS</strong></div>
       <div class="pos-connecting-spinner" aria-hidden="true"></div>
       <h1>Connecting your workspace</h1>
       <p>${h(message)}</p>
@@ -333,7 +454,7 @@ function wasLaunchedFromHub() {
 function renderHubReconnect() {
   root.innerHTML = '<main id="main" class="pos-connecting" role="alert">' +
     '<div class="pos-connecting-card">' +
-      '<div class="pos-connecting-brand"><span class="pos-connecting-icon" aria-hidden="true">V</span><strong>V79 Digital POS</strong></div>' +
+      '<div class="pos-connecting-brand"><img class="pos-connecting-icon" src="/brand/icon-64.png" alt="" width="42" height="42"><strong>Vision79 POS</strong></div>' +
       '<h1>Reconnect through V79 Hub</h1>' +
       '<p>We could not confirm your POS session. Return to your Hub workspace and launch POS again.</p>' +
       '<a class="btn primary" href="https://hub.v79sl.com/">Return to V79 Hub</a>' +
@@ -345,48 +466,86 @@ function renderUnauthenticated() {
 }
 
 function renderLogin() {
-  root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><span class="logo-orb">V</span><span>V79 Digital <b>POS</b></span></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details><summary>Integration testing</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
+  root.innerHTML = `<div class="login"><div class="login-art"><div class="logo-large"><img class="pos-wordmark" src="/brand/header-dark.png" width="240" height="64" alt="Vision79 POS" decoding="async"></div><div class="login-copy"><div class="eyebrow">From Idea to Advantage.</div><h1>Run sales, stock and replenishment from one commerce workspace.</h1><p>Serve customers quickly, protect inventory availability and act on reorder signals before stock runs out.</p><div class="login-points"><span>Sales & checkout</span><span>Inventory intelligence</span><span>Purchasing & lead times</span></div></div><div class="footnote">V79 Digital · Commerce Workspace</div></div><main id="main" class="login-panel"><div class="card login-card"><span class="pill">HUB MANAGED ACCESS</span><h2>Open V79 Digital POS</h2><p class="muted">POS is launched securely from your V79 Digital Hub workspace.</p><a class="btn primary" href="https://hub.v79sl.com/">Back to V79 Digital Hub →</a><button class="btn" data-action="demo">Explore demo workspace</button><div class="notice" style="margin-top:14px">Use the Hub to launch your assigned business workspace. Demo mode uses sample data and never saves sales.</div><details class="integration-tools"><summary>Authorised integration tools</summary><p class="footnote">For authorised Hub integration testing only. Short-lived access tokens remain in this browser tab and clear on refresh.</p><form id="connect-form">${field("token", "POS access token", "password", "", 'required autocomplete="off"')}${field("tenant", "Hub organisation ID", "text", "", 'required autocomplete="off"')}<button class="btn dark" type="submit">Connect workspace</button></form></details></div></main></div>`;
+}
+// Navigation is a presentation convenience; API permissions remain authoritative.
+const pagePermissions = {
+  overview: "reports.read", register: "sales.create", products: "catalogue.read",
+  inventory: "inventory.read", "stock-control": "inventory.read", "technician-stock": "inventory.read", customers: "customers.read",
+  sales: "sales.read", orders: "orders.read", purchasing: "procurement.read", replenishment: "replenishment.read",
+  reports: "reports.read",
+};
+function visibleTabs() {
+  return tabs.filter(([id]) => can(pagePermissions[id]) &&
+    (id !== "technician-stock" ||
+      ["OWNER", "ADMIN", "MANAGER"].includes(state.me?.roleKey)));
+}
+function navButton([id, label, icon]) {
+  return `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`;
+}
+function loadNotice() {
+  const errors = Object.keys(state.loadErrors || {});
+  if (!errors.length) return "";
+  return `<div class="notice warn data-warning" role="status"><div><strong>Some workspace data could not be refreshed.</strong><br>Unavailable sections: ${errors.map(h).join(", ")}. Previously loaded rows may be out of date.</div><button class="btn" data-action="refresh">Retry loading</button></div>`;
+}
+function pageContent() {
+  const dependencies = {
+    register: ["products", "registers", "inventory"], products: ["products"],
+    inventory: ["inventory"], "stock-control": ["transfers", "stockCounts", "locations"],
+    "technician-stock": ["team", "inventory", "locations", "transfers"],
+    customers: ["customers"], sales: ["sales"], orders: ["orders"],
+    purchasing: ["suppliers", "purchaseOrders"], replenishment: ["recommendations"],
+  };
+  if ((dependencies[state.page] || []).some(key => state.loadErrors?.[key])) {
+    const label = tabs.find(([id]) => id === state.page)?.[1] || "Workspace";
+    return header(label, "This section could not be refreshed.") +
+      '<section class="card section"><h2>Data unavailable</h2><p class="muted">Refresh this section before continuing. Previously loaded data may be out of date.</p><button class="btn primary" data-action="refresh">Retry this section</button></section>';
+  }
+  return pages[state.page]();
 }
 function render() {
   if (!state.me && !state.demo) return renderUnauthenticated();
-  const title = state.demo
-    ? "Preview workspace"
-    : state.me?.roleKey || "Workspace";
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">V</span><span>V79 POS<small>BY V79 DIGITAL</small></span></div><div class="nav-label">Commerce</div><nav class="nav" aria-label="Main navigation">${tabs.map(([id, label, icon]) => `<button data-page="${id}" class="${state.page === id ? "active" : ""}" aria-current="${state.page === id ? "page" : "false"}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`).join("")}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo workspace" : "Workspace connected"}</strong><span class="connection"><i></i>${state.demo ? "Sample data · no changes saved" : `Hub role: ${h(title)}`}</span></div><a class="hub-link" href="https://hub.v79sl.com/">← Back to V79 Digital Hub</a><div class="sidebar-tagline">From Idea to Advantage.</div></aside><div class="work"><header class="topbar"><div><div class="top-eyebrow">Active workspace</div><strong>${state.demo ? "Demo business" : h(state.me?.roleKey || "Business workspace")}</strong><div class="meta">${state.demo ? "Preview only" : "V79 Digital Hub membership verified"}</div></div><div class="top-actions"><span class="statusline"><span class="dot"></span>${state.demo ? "Preview" : "Operational"}</span><button class="btn compact" data-action="refresh">Refresh</button><button class="btn compact" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main">${pages[state.page]()}</main></div></div>`;
+  if (!state.demo && state.me?.roleKey === "TECHNICIAN") { window.location.replace("/technician"); return; }
+  const allowed = visibleTabs();
+  if (!allowed.some(([id]) => id === state.page)) state.page = allowed[0]?.[0] || "overview";
+  const label = tabs.find(([id]) => id === state.page)?.[1] || "Workspace";
+  document.title = `${label} | Vision79 POS`;
+  const title = state.demo ? "Sample business" : state.me?.roleKey || "Business workspace";
+  const nav = [["Sell & serve", ["overview", "register", "sales", "orders", "customers"]], ["Stock & supply", ["products", "inventory", "technician-stock", "stock-control", "purchasing", "replenishment"]], ["Reporting", ["reports"]]]
+    .map(([group, ids]) => {
+      const rows = allowed.filter(([id]) => ids.includes(id));
+      return rows.length ? `<div class="nav-group"><div class="nav-label">${group}</div>${rows.map(navButton).join("")}</div>` : "";
+    }).join("");
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><img src="/brand/icon-64.png" width="44" height="44" alt=""><span>Vision79 <b>POS</b><small>COMMERCE WORKSPACE</small></span></div><nav class="nav" aria-label="Main navigation">${nav}</nav><div class="sidebar-foot"><strong>${state.demo ? "Demo workspace" : "Hub workspace"}</strong><span>${state.demo ? "Sample data · no changes saved" : `Role: ${h(title)}`}</span></div><a class="hub-link" href="https://hub.v79sl.com/">← Back to Vision79 Hub</a><div class="sidebar-tagline">From Idea to Advantage.</div></aside><div class="work"><header class="topbar"><div><div class="top-eyebrow">Vision79 / Point of sale</div><strong>${h(label)}</strong><div class="meta">${state.demo ? "Demo · sample data" : h(title)}</div></div><div class="top-actions"><button class="btn compact" data-action="theme" aria-label="${document.documentElement.dataset.theme === "dark" ? "Switch to light appearance" : "Switch to dark appearance"}">${document.documentElement.dataset.theme === "dark" ? "Light mode" : "Dark mode"}</button><button class="btn compact" data-action="refresh">Refresh</button><button class="btn compact" data-action="signout">${state.demo ? "Exit demo" : "Sign out"}</button></div></header><main class="content" id="main" tabindex="-1">${state.demo ? '<div class="notice demo-notice">Demo workspace · sample data · sales and changes are never saved.</div>' : ""}${loadNotice()}${pageContent()}</main><footer class="workspace-footer">Vision79 POS <span>Currency: XCD (EC$) · Powered by Vision79 Digital</span></footer></div></div>`;
+  // Keep the current section visible in the horizontal mobile navigation.
+  // Scroll only the navigation region; never move the checkout/document viewport.
+  const navigation = document.querySelector(".nav");
+  if (navigation?.scrollWidth > navigation?.clientWidth) {
+    const active = navigation.querySelector('[aria-current="page"]');
+    if (active) {
+      const item = active.getBoundingClientRect(), region = navigation.getBoundingClientRect();
+      if (item.left < region.left) navigation.scrollLeft -= region.left - item.left;
+      else if (item.right > region.right) navigation.scrollLeft += item.right - region.right;
+    }
+  }
 }
 const metric = (label, value, note, tone = "") =>
-  `<div class="card metric ${h(tone)}"><div class="metric-top"><div class="label">${h(label)}</div><span>LIVE</span></div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
+  `<div class="card metric ${h(tone)}"><div class="metric-top"><div class="label">${h(label)}</div></div><strong>${h(value)}</strong><small>${h(note)}</small></div>`;
+function reportValue(value, money = false) {
+  if (value === null || value === undefined || String(value).trim() === "" || !Number.isFinite(Number(value))) return "Unavailable";
+  return money ? cash(value) : h(value);
+}
 function overview() {
-  if (!can("reports.read"))
-    return (
-      header("Overview", "Your business at a glance") + needs("reports.read")
-    );
-  const d = state.data.dashboard || {},
-    s = d.sales || {},
-    i = d.inventory || {},
-    p = d.purchasing || {};
-  return (
-    header(
-      "Commerce overview",
-      "Live sales, margin, inventory and supply signals across this workspace",
-      `<div class="actions"><button class="btn primary" data-page="register">New sale →</button></div>`,
-    ) +
-    `<div class="grid metric-grid">${metric("Net revenue · 30 days", cash(s.netRevenue), "After refunds", "revenue")}${metric("Completed sales", s.orders || 0, "Last 30 days", "orders")}${metric("Average sale", cash(s.averageSale), "Per completed order", "average")}${metric("Gross profit", cash(s.grossProfit), "Before operating expenses", "profit")}${metric("Stock at risk", i.criticalReplenishmentItems || 0, "Reorder alerts", Number(i.criticalReplenishmentItems || 0) > 0 ? "risk" : "healthy")}</div><div class="ops-banner"><div><span class="ops-kicker">Inventory intelligence</span><strong>${Number(i.criticalReplenishmentItems || 0) > 0 ? `${h(i.criticalReplenishmentItems)} item(s) need replenishment attention` : "No critical replenishment signals"}</strong><small>Recommendations use demand, lead time and safety stock policy.</small></div><button class="btn" data-page="replenishment">Review signals →</button></div><div class="split"><section class="card section"><div class="row"><div><h2>Recent sales</h2><p class="section-note">Latest completed and recorded transactions</p></div><button class="btn compact" data-page="sales">View all</button></div>${
-      (state.data.sales || []).length
-        ? table(
-            ["Sale", "Customer", "Date", "Total"],
-            state.data.sales
-              .slice(0, 5)
-              .map(
-                (x) =>
-                  `<tr><td><strong>${h(x.number)}</strong></td><td>${h(x.customer?.name || "Walk-in")}</td><td>${h(date(x.createdAt))}</td><td><strong>${cash(x.total)}</strong></td></tr>`,
-              ),
-          )
-        : empty(
-            "No sales recorded yet. Open a register and create your first sale.",
-          )
-    }</section><section class="card section operations-card"><div><h2>Operations snapshot</h2><p class="section-note">Stock and inbound supply position</p></div><div class="ops-stat"><span>Inventory value</span><strong>${cash(i.value)}</strong></div><div class="ops-stat"><span>Open purchase orders</span><strong>${h(p.openPurchaseOrders || 0)}</strong></div><div class="ops-stat"><span>Delayed shipments</span><strong class="${Number(d.logistics?.delayedShipments || 0) > 0 ? "danger-text" : ""}">${h(d.logistics?.delayedShipments || 0)}</strong></div><hr class="divider"><button class="btn wide" data-page="purchasing">Open purchasing →</button></section></div>`
-  );
+  if (!can("reports.read")) return header("Overview", "Your business at a glance") + needs("reports.read");
+  const failed = state.loadErrors?.dashboard;
+  const d = failed ? {} : state.data.dashboard || {}, s = d.sales || {}, i = d.inventory || {}, p = d.purchasing || {};
+  const salesUnavailable = state.loadErrors?.sales || !Array.isArray(state.data.sales);
+  const action = can("sales.create") ? '<button class="btn primary" data-page="register">+ New sale</button>' : "";
+  return header("Your business, at a glance", "Sales, stock and supply in one connected workspace.", action) +
+    `<div class="grid metric-grid">${metric("Net revenue · 30 days", reportValue(s.netRevenue, true), "After refunds", "revenue")}${metric("Completed sales", reportValue(s.orders), "Last 30 days", "orders")}${metric("Average sale", reportValue(s.averageSale, true), "Per completed sale", "average")}${metric("Gross profit", reportValue(s.grossProfit, true), "Before operating expenses", "profit")}</div>
+    <div class="ops-banner"><div><span class="ops-kicker">Stock & supply</span><strong>${reportValue(i.criticalReplenishmentItems) === "Unavailable" ? "Stock signals unavailable" : Number(i.criticalReplenishmentItems) > 0 ? `${h(i.criticalReplenishmentItems)} item(s) need replenishment attention` : "No critical replenishment signals"}</strong><small>Based on demand, lead time and safety stock policy.</small></div>${can("replenishment.read") ? '<button class="btn" data-page="replenishment">Review stock signals →</button>' : ""}</div>
+    <div class="split"><section class="card section"><div class="row"><div><h2>Recent sales</h2><p class="section-note">Latest recorded transactions</p></div>${can("sales.read") ? '<button class="btn compact" data-page="sales">View all</button>' : ""}</div>${!can("sales.read") ? empty("Your role does not include sales history.") : salesUnavailable ? empty("Sales history is unavailable. Use Retry loading above.") : state.data.sales.length ? table(["Sale", "Customer", "Date", "Total"], state.data.sales.slice(0, 5).map(x => `<tr><td><strong>${h(x.number)}</strong></td><td>${h(x.customer?.name || "Walk-in")}</td><td>${h(date(x.createdAt))}</td><td><strong>${cash(x.total)}</strong></td></tr>`)) : empty("No sales recorded yet. Open a register to begin.")}</section>
+    <section class="card section operations-card"><h2>Operations snapshot</h2><p class="section-note">Stock and inbound supply</p><div class="ops-stat"><span>Inventory value</span><strong>${reportValue(i.value, true)}</strong></div><div class="ops-stat"><span>Open purchase orders</span><strong>${reportValue(p.openPurchaseOrders)}</strong></div><div class="ops-stat"><span>Delayed shipments</span><strong>${reportValue(d.logistics?.delayedShipments)}</strong></div>${can("procurement.read") ? '<button class="btn wide" data-page="purchasing">Open purchasing →</button>' : ""}</section></div>`;
 }
 function variants() {
   return (state.data.products || []).flatMap((p) =>
@@ -440,6 +599,7 @@ function register() {
       : !open
         ? `<div class="notice warn">Register is closed. Open it before taking payments.</div>`
         : `<div class="notice">${h(r.name)} is open · sales are recorded at ${h(r.location?.name)}</div>`) +
+    registerCloseReconciliation(r) +
     `<div class="register-layout"><section class="card"><div class="row"><h2>Catalogue</h2><span class="muted">${matching.length} items</span></div><input class="search" id="product-search" type="search" placeholder="Search name, SKU or barcode" aria-label="Search products" value="${h(state.search)}"><div class="product-grid">${
       matching
         .map((v) => {
@@ -497,15 +657,69 @@ function inventory() {
     `<section class="card section">${rows.length ? table(["Product", "Location", "On hand", "Available", "Status"], rows) : empty("No stock balances yet. Receive stock or make an authorised adjustment.")}</section>`
   );
 }
+// Owner/manager view uses existing tenant- and location-scoped API data only.
+ // Technicians retain their separate /technician workspace; no role elevation.
+function technicianStock() {
+  const authorised = ["OWNER", "ADMIN", "MANAGER"].includes(state.me?.roleKey) &&
+    can("team.read") && can("inventory.read");
+  if (!authorised) return header("Technician Inventory", "Stock custody by technician") +
+    needs("inventory.read");
+  const technicians = (state.data.team?.members || [])
+    .filter(member => member.active && member.roleKey === "TECHNICIAN");
+  const mobile = (state.data.locations || []).filter(location => location.type === "MOBILE");
+  const stock = (state.data.inventory || []).filter(balance =>
+    mobile.some(location => location.id === balance.locationId));
+  const transfers = (state.data.transfers || []).filter(transfer =>
+    ["TECHNICIAN_ISSUE", "TECHNICIAN_RETURN_GOOD", "TECHNICIAN_RETURN_FAULTY"]
+      .includes(transfer.purpose));
+  const byLocation = locationId => technicians.find(member =>
+    (member.locationAccess || []).some(access =>
+      access.locationId === locationId || access.location?.id === locationId));
+  const who = locationId => {
+    const member = byLocation(locationId);
+    return member ? (member.profile?.displayName || member.userId) : "Not assigned";
+  };
+  const pending = transfers.filter(transfer =>
+    ["REQUESTED", "APPROVED", "IN_TRANSIT"].includes(transfer.status));
+  const qtyOnHand = stock.reduce((total, row) => total + Number(row.onHand || 0), 0);
+  const actions = '<button class="btn" data-page="stock-control">Manage transfers</button>' +
+    (["OWNER", "ADMIN"].includes(state.me?.roleKey)
+      ? '<button class="btn primary" data-modal="technician-access">Assign technician</button>'
+      : "");
+  const locationRows = mobile.map(location => {
+    const rows = stock.filter(row => row.locationId === location.id);
+    const quantity = rows.reduce((sum, row) => sum + Number(row.onHand || 0), 0);
+    return `<tr><td><strong>${h(who(location.id))}</strong></td><td>${h(location.name)}</td><td>${h(rows.length)}</td><td>${h(round(quantity))}</td></tr>`;
+  });
+  const stockRows = stock.map(row =>
+    `<tr><td><strong>${h(row.productVariant?.product?.name || row.productVariant?.name || "Item")}</strong><small>${h(row.productVariant?.sku || "")}</small></td><td>${h(who(row.locationId))}</td><td>${h(row.location?.name || mobile.find(location => location.id === row.locationId)?.name || "Mobile")}</td><td>${h(row.onHand)}</td><td>${h(row.available)}</td></tr>`);
+  const transferRows = transfers.map(transfer =>
+    `<tr><td><strong>${h(transfer.number)}</strong><small>${h(date(transfer.createdAt))}</small></td><td>${h((transfer.purpose || "").replaceAll("_", " "))}</td><td>${h(transfer.fromLocation?.name || "—")} → ${h(transfer.toLocation?.name || "—")}</td><td>${h(transfer.jobReference || "—")}</td><td>${badge(transfer.status)}</td></tr>`);
+  return header("Technician Inventory",
+    "Live equipment custody, available stock and warehouse movements for your technicians",
+    `<div class="actions">${actions}</div>`) +
+    `<div class="grid metric-grid">${metric("Assigned technicians", technicians.length, "Active POS technician roles")}${metric("Mobile stock locations", mobile.length, "Dedicated technician custody")}${metric("Units on hand", round(qtyOnHand), "Across visible mobile locations")}${metric("Pending movements", pending.length, "Requested, approved or in transit")}</div>` +
+    `<section class="card section"><h2>Technician custody</h2>${locationRows.length ? table(["Technician", "Stock location", "Stock lines", "Units on hand"], locationRows) : empty("No technician stock locations are assigned. Use Assign technician to create one for an existing team member.")}</section>` +
+    `<section class="card section"><h2>Equipment held by technicians</h2>${stockRows.length ? table(["Equipment", "Technician", "Location", "On hand", "Available"], stockRows) : empty("No equipment is held in technician custody yet.")}</section>` +
+    `<section class="card section"><h2>Technician movements</h2>${transferRows.length ? table(["Reference", "Movement", "Route", "Job", "Status"], transferRows) : empty("No technician issues or returns recorded yet.")}</section>`;
+}
+
 function stockControl() {
   if (!can("inventory.read"))
     return header("Stock Control", "Counts and branch transfers") + needs("inventory.read");
   const transfers = (state.data.transfers || []).map((x) => {
     const actions = [];
     if (can("inventory.transfer") && x.status === "REQUESTED") actions.push(`<button class="btn compact" data-transfer-action="approve" data-transfer="${h(x.id)}">Approve</button>`);
-    if (can("inventory.transfer") && x.status === "APPROVED") actions.push(`<button class="btn compact" data-transfer-action="dispatch" data-transfer="${h(x.id)}">Dispatch</button>`);
+    if (can("inventory.transfer") && x.status === "APPROVED") {
+      const controlled = x.purpose === "TECHNICIAN_ISSUE" && x.lines?.some(l =>
+        l.productVariant?.product?.productType === "SERIALIZED" ||
+        l.productVariant?.product?.productType === "LOT_TRACKED" ||
+        l.productVariant?.requiresExpiry);
+      if (controlled) actions.push(`<button class="btn compact" data-transfer-allocate="${h(x.id)}">Allocate serials/lots</button>`);
+      actions.push(`<button class="btn compact" data-transfer-action="dispatch" data-transfer="${h(x.id)}">Dispatch</button>`);
+    }
     if (can("inventory.transfer") && x.status === "IN_TRANSIT") actions.push(`<button class="btn compact primary" data-transfer-action="receive" data-transfer="${h(x.id)}">Receive</button>`);
-    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.fromLocation?.name)} → ${h(x.toLocation?.name)}</td><td>${h(x.lines?.length || 0)} line(s)</td><td>${badge(x.status)}</td><td><div class="actions">${actions.join("")}</div></td></tr>`;
+    return `<tr><td><strong>${h(x.number)}</strong><small>${h(date(x.createdAt))}</small></td><td>${h(x.fromLocation?.name)} → ${h(x.toLocation?.name)}<small>${h((x.purpose || "GENERAL").replaceAll("_", " "))}${x.jobReference ? " · Job " + h(x.jobReference) : ""}</small></td><td>${h(x.lines?.map(l => l.productVariant?.sku + " × " + l.quantity).join(", ") || "—")}</td><td>${badge(x.status)}</td><td><div class="actions">${actions.join("")}</div></td></tr>`;
   });
   const counts = (state.data.stockCounts || []).map((x) => {
     const actions = [];
@@ -517,7 +731,7 @@ function stockControl() {
     header(
       "Stock control",
       "Cycle counts, stock corrections and location transfers",
-      `<div class="actions">${can("inventory.count") ? '<button class="btn" data-modal="stock-count">+ Cycle count</button>' : ""}${can("inventory.transfer") ? '<button class="btn primary" data-modal="stock-transfer">+ Transfer stock</button>' : ""}</div>`,
+      `<div class="actions">${["OWNER","ADMIN"].includes(state.me?.roleKey) ? '<button class="btn" data-modal="warehouse">+ Warehouse</button><button class="btn" data-modal="technician-access">Assign technician</button>' : ""}${can("inventory.count") ? '<button class="btn" data-modal="stock-count">+ Cycle count</button>' : ""}${can("inventory.transfer") ? '<button class="btn primary" data-modal="stock-transfer">+ Transfer stock</button>' : ""}</div>`,
     ) +
     `<div class="split"><section class="card section"><div class="row"><div><h2>Stock transfers</h2><p class="section-note">Move sellable stock between assigned locations</p></div></div>${transfers.length ? table(["Transfer","Route","Items","Status","Actions"],transfers) : empty("No stock transfers yet.")}</section><section class="card section"><div><h2>Cycle counts</h2><p class="section-note">Count selected products and post approved variances</p></div>${counts.length ? table(["Count","Location","Type","Status","Actions"],counts) : empty("No stock counts yet.")}</section></div>`
   );
@@ -610,6 +824,15 @@ function purchasing() {
     `<div class="split"><section class="card section"><h2>Purchase orders</h2>${orders.length ? table(["PO", "Supplier", "Destination", "Status", "Expected", "Actions"], orders) : empty("No purchase orders yet. Link a product to a supplier, then create an order.")}</section><section class="card section"><h2>Suppliers</h2>${suppliers.length ? table(["Name", "Lead time", "Email"], suppliers) : empty("No suppliers configured.")}</section></div>`
   );
 }
+function reports() {
+  if (!can("reports.read"))
+    return header("Reports & analytics", "Your business KPI history") + needs("reports.read");
+  return renderKpiReports({
+    report: state.data.trends, period: state.reportPeriod,
+    locationId: state.reportLocation, metric: state.reportMetric,
+    locations: state.data.locations || [], demo: state.demo, error: state.reportError
+  });
+}
 function replenishment() {
   if (!can("replenishment.read"))
     return (
@@ -635,11 +858,13 @@ const pages = {
   products,
   inventory,
   "stock-control": stockControl,
+  "technician-stock": technicianStock,
   customers,
   sales,
   orders,
   purchasing,
   replenishment,
+  reports,
 };
 function modal(title, contents, id, button = "Save") {
   const old = document.querySelector("#dialog");
@@ -653,6 +878,47 @@ function modal(title, contents, id, button = "Save") {
   dialog.querySelector("input,select")?.focus();
 }
 function openModal(name) {
+  if (name === "warehouse") {
+    modal("Add inventory location", field("name", "Warehouse or store name", "text", "", 'required minlength="2" maxlength="120"') +
+      field("code", "Short location code", "text", "", 'required minlength="2" maxlength="24" pattern="[a-zA-Z0-9_-]+"') +
+      select("type", "Location type", [["WAREHOUSE","Warehouse"],["STORE","Store"],["OFFICE","Office"]]) +
+      field("address", "Address (optional)", "text", "", 'maxlength="300"'),
+      "warehouse-form", "Create location");
+    return;
+  }
+  if (name === "technician-access") {
+    const members = (state.data.team?.members || []).filter(m => m.active && !["OWNER","ADMIN"].includes(m.roleKey));
+    modal("Assign technician stock custody",
+      `<div class="field wide notice">This changes the selected member's POS role to Technician. They will lose cashier and warehouse permissions. A dedicated mobile stock location will be created, and their Hub login/MFA stays in place.</div>` +
+      select("userId", "Existing Hub team member", members.map(m =>
+        [m.userId, (m.profile?.displayName || m.userId) + " · " + m.roleKey])) +
+      field("displayName", "Technician display name", "text", "", 'required minlength="2" maxlength="100"'),
+      "technician-access-form", "Assign technician");
+    return;
+  }
+  if (name === "allocate-transfer") {
+    const transfer = (state.data.transfers || []).find(x => x.id === state.selectedTransfer);
+    const line = transfer?.lines?.[0];
+    if (!line) return toast("Transfer line is no longer available", true);
+    const product = line.productVariant;
+    const required = Number(line.quantity);
+    const isSerial = product?.product?.productType === "SERIALIZED";
+    const serialInputs = isSerial
+      ? state.transferSerials.slice(0, 200).map(x =>
+          `<label class="stock-choice"><input type="checkbox" class="issue-serial" value="${h(x.id)}"> ${h(x.serialNumber)}</label>`).join("")
+      : "";
+    const lotInputs = !isSerial
+      ? state.transferLots.slice(0, 100).map(x =>
+          `<div class="field"><label for="lot-${h(x.id)}">${h(x.lotNumber)} · ${h(x.quantityOnHand)} available</label><input id="lot-${h(x.id)}" class="issue-lot" data-lot="${h(x.id)}" type="number" min="0" max="${h(x.quantityOnHand)}" step="0.0001" value="0"></div>`).join("")
+      : "";
+    modal("Allocate controlled technician issue",
+      `<div class="field wide notice">Transfer ${h(transfer.number)} · ${h(product?.sku)} · exact quantity <strong>${h(required)}</strong>. Select the original warehouse stock units before dispatch.</div>` +
+      (isSerial
+        ? `<div class="field wide"><strong>Available serial numbers</strong><div class="stock-choice-list">${serialInputs || "No available serials were found at this warehouse."}</div></div>`
+        : `<div class="field wide"><strong>Available lots</strong><div class="form-grid">${lotInputs || "No available lots were found at this warehouse."}</div></div>`),
+      "allocation-form", "Save allocation");
+    return;
+  }
   const locations = (state.data.locations || []).map((location) => [location.id, location.name]);
   if (name === "stock-count")
     modal(
@@ -1065,6 +1331,8 @@ async function connect(token, tenant) {
   state.tenant = tenant.trim();
   state.demo = false;
   state.data = {};
+  state.loadErrors = {};
+  state.lastRegisterClose = null;
   try {
     state.me = await api("/v1/me");
     state.tenant = state.me.tenantId;
@@ -1141,6 +1409,25 @@ document.addEventListener("submit", async (event) => {
   try {
     let result;
     switch (form.id) {
+      case "warehouse-form":
+        result = await api("/v1/locations", {
+          method: "POST",
+          body: JSON.stringify({ name: String(v.get("name")).trim(), code: String(v.get("code")).trim(),
+            type: v.get("type"), address: String(v.get("address") || "").trim() || undefined })
+        });
+        break;
+      case "technician-access-form": {
+        const userId = String(v.get("userId"));
+        const member = (state.data.team?.members || []).find(m => m.userId === userId);
+        if (!member || !member.active || ["OWNER","ADMIN"].includes(member.roleKey)) throw Error("Select an eligible Hub team member.");
+        if (member.roleKey !== "TECHNICIAN") {
+          await api("/v1/team", { method: "POST", body: JSON.stringify({
+            userId, roleKey: "TECHNICIAN", locationIds: [] }) });
+        }
+        result = await api("/v1/technician/assign", { method: "POST",
+          body: JSON.stringify({ userId, displayName: String(v.get("displayName")).trim() }) });
+        break;
+      }
       case "stock-count-form":
         result = await api("/v1/stock-counts", {
           method: "POST",
@@ -1164,6 +1451,26 @@ document.addEventListener("submit", async (event) => {
         state.data.activeStockCount = null;
         state.selectedStockCount = "";
         state.selectedStockCountLine = "";
+        break;
+      }
+      case "allocation-form": {
+        const transfer = (state.data.transfers || []).find(t => t.id === state.selectedTransfer);
+        if (!transfer || transfer.status !== "APPROVED" || transfer.purpose !== "TECHNICIAN_ISSUE") {
+          throw Error("Only an approved technician stock issue can be allocated here.");
+        }
+        const serialNumberIds = [...document.querySelectorAll(".issue-serial:checked")].map(x => x.value);
+        const lotAllocations = [...document.querySelectorAll(".issue-lot")].map(x =>
+          ({ lotId: x.dataset.lot, quantity: Number(x.value) })).filter(x => x.quantity > 0);
+        const required = Number(transfer.lines?.[0]?.quantity);
+        const isSerial = transfer.lines?.[0]?.productVariant?.product?.productType === "SERIALIZED";
+        if (isSerial && serialNumberIds.length !== required) throw Error("Select exactly " + required + " serial numbers.");
+        if (!isSerial && Math.abs(lotAllocations.reduce((a, x) => a + x.quantity, 0) - required) > 0.0001) {
+          throw Error("Select lot quantities totalling exactly " + required + ".");
+        }
+        result = await api(`/v1/transfers/${encodeURIComponent(transfer.id)}/allocate`, {
+          method: "POST", body: JSON.stringify({ serialNumberIds, lotAllocations })
+        });
+        state.selectedTransfer = "";
         break;
       }
       case "stock-transfer-form": {
@@ -1430,6 +1737,7 @@ document.addEventListener("submit", async (event) => {
             }),
           },
         );
+        state.lastRegisterClose = result;
         break;
       }
       case "checkout-form": {
@@ -1478,7 +1786,7 @@ document.addEventListener("submit", async (event) => {
     document.querySelector("#dialog")?.remove();
     await load();
     render();
-    if (form.id !== "checkout-form") toast("Saved successfully");
+    if (form.id !== "checkout-form") toast(form.id === "close-form" ? "Register closed" : "Saved successfully");
   } catch (err) {
     toast(err.message, true);
   } finally {
@@ -1497,6 +1805,21 @@ root.addEventListener("input", (event) => {
   }
 });
 root.addEventListener("change", (event) => {
+  if (event.target.id === "report-period") {
+    state.reportPeriod = event.target.value;
+    loadTrends();
+    return;
+  }
+  if (event.target.id === "report-location") {
+    state.reportLocation = event.target.value;
+    loadTrends();
+    return;
+  }
+  if (event.target.id === "report-metric") {
+    state.reportMetric = event.target.value;
+    render();
+    return;
+  }
   if (event.target.id === "register-select") {
     state.selectedRegister = event.target.value;
     state.cart = [];
@@ -1510,13 +1833,15 @@ root.addEventListener("change", (event) => {
 });
 root.addEventListener("click", async (event) => {
   const target = event.target.closest(
-    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action],[data-transfer-action],[data-count-action]",
+    "[data-page],[data-action],[data-modal],[data-add],[data-qty],[data-approve],[data-receive],[data-return],[data-order-action],[data-transfer-action],[data-transfer-allocate],[data-count-action]",
   );
   if (!target) return;
   if (target.dataset.page) {
+    if (!Object.hasOwn(pagePermissions, target.dataset.page) || !can(pagePermissions[target.dataset.page])) return;
     state.page = target.dataset.page;
     state.search = "";
     render();
+    if (state.page === "reports" && !state.demo) await loadTrends();
     document.querySelector("#main")?.focus();
     return;
   }
@@ -1543,6 +1868,28 @@ root.addEventListener("click", async (event) => {
     } catch (err) {
       toast(err.message, true);
     }
+    return;
+  }
+  if (target.dataset.transferAllocate) {
+    if (state.demo) return toast("Demo mode is read-only.", true);
+    const transfer = (state.data.transfers || []).find(x => x.id === target.dataset.transferAllocate);
+    const line = transfer?.lines?.[0];
+    if (!line) return toast("Transfer not found.", true);
+    const locationId = encodeURIComponent(transfer.fromLocationId);
+    const id = encodeURIComponent(line.productVariantId);
+    try {
+      state.selectedTransfer = transfer.id;
+      if (line.productVariant?.product?.productType === "SERIALIZED") {
+        const result = await api(`/v1/inventory/serials?locationId=${locationId}&productVariantId=${id}&status=AVAILABLE`);
+        state.transferSerials = result.serials || [];
+        state.transferLots = [];
+      } else {
+        const result = await api(`/v1/inventory/lots?locationId=${locationId}`);
+        state.transferLots = (result.lots || []).filter(l => l.productVariantId === line.productVariantId);
+        state.transferSerials = [];
+      }
+      openModal("allocate-transfer");
+    } catch (err) { toast(err.message, true); }
     return;
   }
   if (target.dataset.transferAction) {
@@ -1646,6 +1993,14 @@ root.addEventListener("click", async (event) => {
     return;
   }
   switch (target.dataset.action) {
+    case "theme": {
+      const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      try { localStorage.setItem("v79-pos-theme", theme); } catch {}
+      render();
+      document.querySelector('[data-action="theme"]')?.focus();
+      break;
+    }
     case "demo":
       state.demo = true;
       state.me = { roleKey: "OWNER", permissions: ["*"] };
@@ -1659,16 +2014,31 @@ root.addEventListener("click", async (event) => {
       state.demo = false;
       state.cart = [];
       state.data = {};
+      state.loadErrors = {};
+      state.lastRegisterClose = null;
       renderUnauthenticated();
       break;
     case "refresh":
       try {
         await load();
+        if (state.page === "reports" && !state.demo) await loadTrends();
         render();
         toast("Data refreshed");
       } catch (err) {
         toast(err.message, true);
       }
+      break;
+    case "report-refresh":
+      await loadTrends();
+      break;
+    case "report-csv":
+      try {
+        await exportTrendsCsv();
+      } catch (error) { toast(error.message, true); }
+      break;
+    case "report-print":
+      if (!state.data.trends) return toast("Load the latest report before printing.", true);
+      window.print();
       break;
     case "clear-cart":
       state.cart = [];
